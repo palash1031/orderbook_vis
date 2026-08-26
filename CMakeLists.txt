@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
+cmake_policy(SET CMP0167 NEW)
 
 project(orderbook LANGUAGES CXX)
 
