@@ -1,43 +1,13 @@
 #include <boost/json.hpp>
 
+#include "order_book.hpp"
+
 #include <fstream>
 #include <iomanip>
 #include <iostream>
-#include <map>
 #include <string>
 
 namespace json = boost::json;
-
-void apply_update(
-    std::map<double, double>& bids,
-    std::map<double, double>& asks,
-    const std::string& side,
-    double price,
-    double quantity)
-{
-    if (side == "bid")
-    {
-        if (quantity == 0.0)
-        {
-            bids.erase(price);
-        }
-        else
-        {
-            bids[price] = quantity;
-        }
-    }
-    else if (side == "offer")
-    {
-        if (quantity == 0.0)
-        {
-            asks.erase(price);
-        }
-        else
-        {
-            asks[price] = quantity;
-        }
-    }
-}
 
 int main()
 {
@@ -49,8 +19,7 @@ int main()
         return 1;
     }
 
-    std::map<double, double> bids;
-    std::map<double, double> asks;
+    OrderBook book;
 
     std::string line;
     int message_count = 0;
@@ -101,9 +70,7 @@ int main()
                                 .c_str()
                         );
 
-                    apply_update(
-                        bids,
-                        asks,
+                    book.apply_update(
                         side,
                         price,
                         quantity
@@ -125,18 +92,18 @@ int main()
     std::cout << std::fixed << std::setprecision(2);
 
     std::cout << "Messages processed: " << message_count << '\n';
-    std::cout << "Bid levels: " << bids.size() << '\n';
-    std::cout << "Ask levels: " << asks.size() << '\n';
+    std::cout << "Bid levels: " << book.bid_levels() << '\n';
+    std::cout << "Ask levels: " << book.ask_levels() << '\n';
 
-    if (!bids.empty() && !asks.empty())
+    const auto best_bid = book.best_bid();
+    const auto best_ask = book.best_ask();
+    const auto spread = book.spread();
+
+    if (best_bid && best_ask && spread)
     {
-        double best_bid = bids.rbegin()->first;
-        double best_ask = asks.begin()->first;
-        double spread = best_ask - best_bid;
-
-        std::cout << "Best bid: " << best_bid << '\n';
-        std::cout << "Best ask: " << best_ask << '\n';
-        std::cout << "Spread: " << spread << '\n';
+        std::cout << "Best bid: " << *best_bid << '\n';
+        std::cout << "Best ask: " << *best_ask << '\n';
+        std::cout << "Spread: " << *spread << '\n';
     }
 
     return 0;
