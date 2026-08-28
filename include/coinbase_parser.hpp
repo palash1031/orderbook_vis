@@ -25,9 +25,18 @@ struct ParsedBookMessage
     std::vector<BookUpdate> updates;
 };
 
+struct ParsedCoinbaseMessage
+{
+    std::uint64_t sequence_num;
+    std::optional<ParsedBookMessage> book_message;
+};
+
 class CoinbaseParser
 {
 public:
+    static ParsedCoinbaseMessage
+    parse_message(const std::string& raw_message);
+
     static std::optional<ParsedBookMessage>
     parse(const std::string& raw_message);
 };

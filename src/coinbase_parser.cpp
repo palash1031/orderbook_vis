@@ -76,7 +76,7 @@ double parse_decimal_string(
 }
 }
 
-std::optional<ParsedBookMessage> CoinbaseParser::parse(
+ParsedCoinbaseMessage CoinbaseParser::parse_message(
     const std::string& raw_message)
 {
     try
@@ -84,16 +84,17 @@ std::optional<ParsedBookMessage> CoinbaseParser::parse(
         const json::value parsed = json::parse(raw_message);
         const auto& object = parsed.as_object();
         const auto& channel = object.at("channel").as_string();
+        const std::uint64_t sequence_num = parse_sequence_num(
+            object.at("sequence_num")
+        );
 
         if (channel != "l2_data")
         {
-            return std::nullopt;
+            return {sequence_num, std::nullopt};
         }
 
         ParsedBookMessage message;
-        message.sequence_num = parse_sequence_num(
-            object.at("sequence_num")
-        );
+        message.sequence_num = sequence_num;
 
         const auto& events = object.at("events").as_array();
 
@@ -147,7 +148,7 @@ std::optional<ParsedBookMessage> CoinbaseParser::parse(
         }
 
         message.type = *message_type;
-        return message;
+        return {sequence_num, std::move(message)};
     }
     catch (const std::exception& error)
     {
@@ -156,4 +157,10 @@ std::optional<ParsedBookMessage> CoinbaseParser::parse(
             + error.what()
         );
     }
+}
+
+std::optional<ParsedBookMessage> CoinbaseParser::parse(
+    const std::string& raw_message)
+{
+    return parse_message(raw_message).book_message;
 }
