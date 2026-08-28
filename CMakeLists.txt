@@ -37,3 +37,30 @@ add_executable(replay
 target_link_libraries(replay PRIVATE
     orderbook_core
 )
+
+include(CTest)
+
+if(BUILD_TESTING)
+    include(FetchContent)
+
+    FetchContent_Declare(
+        googletest
+        URL https://github.com/google/googletest/archive/refs/tags/v1.17.0.zip
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+
+    FetchContent_MakeAvailable(googletest)
+
+    add_executable(orderbook_tests
+        tests/order_book_tests.cpp
+        tests/coinbase_parser_tests.cpp
+    )
+
+    target_link_libraries(orderbook_tests PRIVATE
+        orderbook_core
+        GTest::gtest_main
+    )
+
+    include(GoogleTest)
+    gtest_discover_tests(orderbook_tests)
+endif()
