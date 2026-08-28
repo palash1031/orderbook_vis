@@ -7,6 +7,8 @@ project(orderbook LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+option(BUILD_BENCHMARKS "Build benchmarks" OFF)
+
 find_package(Boost REQUIRED COMPONENTS json)
 find_package(OpenSSL REQUIRED)
 
@@ -66,4 +68,30 @@ if(BUILD_TESTING)
 
     include(GoogleTest)
     gtest_discover_tests(orderbook_tests)
+endif()
+
+if(BUILD_BENCHMARKS)
+    include(FetchContent)
+
+    set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+    set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
+    set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+
+    FetchContent_Declare(
+        googlebenchmark
+        URL https://github.com/google/benchmark/archive/refs/tags/v1.9.5.zip
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+
+    FetchContent_MakeAvailable(googlebenchmark)
+
+    add_executable(orderbook_benchmarks
+        benchmarks/orderbook_benchmarks.cpp
+        benchmarks/parser_benchmarks.cpp
+    )
+
+    target_link_libraries(orderbook_benchmarks PRIVATE
+        orderbook_core
+        benchmark::benchmark_main
+    )
 endif()

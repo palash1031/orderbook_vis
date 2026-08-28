@@ -1,3 +1,5 @@
 build
+build-release
+benchmark-results
 btc_usd.jsonl
 temp-copy

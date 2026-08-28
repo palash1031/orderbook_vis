@@ -1,18 +1,58 @@
 #include "book_reconstructor.hpp"
 #include "coinbase_parser.hpp"
 
+#include <chrono>
+#include <cstdint>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <string>
 
-int main()
+namespace
 {
-    std::ifstream input_file("btc_usd.jsonl");
+struct ReplayStats
+{
+    std::uint64_t lines_read = 0;
+    std::uint64_t valid_coinbase_messages = 0;
+    std::uint64_t malformed_messages = 0;
+    std::uint64_t non_l2_messages = 0;
+    std::uint64_t l2_messages = 0;
+    std::uint64_t snapshots = 0;
+    std::uint64_t update_messages = 0;
+    std::uint64_t book_updates_received = 0;
+    std::uint64_t book_updates_applied = 0;
+    std::uint64_t ignored_l2_messages = 0;
+    std::uint64_t sequence_gaps = 0;
+    std::uint64_t duplicate_messages = 0;
+    std::uint64_t stale_messages = 0;
+};
+
+double per_second(std::uint64_t count, double elapsed_seconds)
+{
+    if (elapsed_seconds <= 0.0)
+    {
+        return 0.0;
+    }
+
+    return static_cast<double>(count) / elapsed_seconds;
+}
+}
+
+int main(int argc, char* argv[])
+{
+    if (argc > 2)
+    {
+        std::cerr << "Usage: " << argv[0] << " [capture.jsonl]\n";
+        return 1;
+    }
+
+    const std::string input_path =
+        argc == 2 ? argv[1] : "btc_usd.jsonl";
+    std::ifstream input_file(input_path);
 
     if (!input_file.is_open())
     {
-        std::cerr << "Failed to open btc_usd.jsonl\n";
+        std::cerr << "Failed to open " << input_path << '\n';
         return 1;
     }
 
@@ -20,54 +60,66 @@ int main()
     SequenceTracker sequence_tracker;
 
     std::string line;
-    int message_count = 0;
-    int l2_messages = 0;
-    int sequence_gaps = 0;
-    int duplicate_messages = 0;
-    int stale_messages = 0;
+    ReplayStats stats;
+
+    const auto replay_start = std::chrono::steady_clock::now();
 
     while (std::getline(input_file, line))
     {
-        ++message_count;
+        ++stats.lines_read;
 
         try
         {
             const ParsedCoinbaseMessage parsed =
                 CoinbaseParser::parse_message(line);
+            ++stats.valid_coinbase_messages;
 
             const SequenceResult sequence =
                 sequence_tracker.observe(parsed.sequence_num);
+            const bool is_snapshot =
+                parsed.book_message
+                && parsed.book_message->type == BookEventType::Snapshot;
 
             switch (sequence.status)
             {
                 case SequenceStatus::Gap:
-                    ++sequence_gaps;
+                    ++stats.sequence_gaps;
                     reconstructor.mark_desynchronized();
                     std::cerr
                         << "message "
-                        << message_count
+                        << stats.lines_read
                         << " sequence gap: expected "
                         << sequence.expected
                         << ", received "
-                        << sequence.received
-                        << "; updates ignored until next snapshot\n";
+                        << sequence.received;
+
+                    if (is_snapshot)
+                    {
+                        std::cerr
+                            << "; snapshot will be used as recovery point\n";
+                    }
+                    else
+                    {
+                        std::cerr
+                            << "; updates ignored until next snapshot\n";
+                    }
                     break;
 
                 case SequenceStatus::Duplicate:
-                    ++duplicate_messages;
+                    ++stats.duplicate_messages;
                     std::cerr
                         << "message "
-                        << message_count
+                        << stats.lines_read
                         << " duplicate sequence: "
                         << sequence.received
                         << "; message ignored\n";
                     break;
 
                 case SequenceStatus::Stale:
-                    ++stale_messages;
+                    ++stats.stale_messages;
                     std::cerr
                         << "message "
-                        << message_count
+                        << stats.lines_read
                         << " stale sequence: expected "
                         << sequence.expected
                         << ", received "
@@ -82,10 +134,23 @@ int main()
 
             if (!parsed.book_message)
             {
+                ++stats.non_l2_messages;
                 continue;
             }
 
-            ++l2_messages;
+            ++stats.l2_messages;
+
+            if (parsed.book_message->type == BookEventType::Snapshot)
+            {
+                ++stats.snapshots;
+            }
+            else
+            {
+                ++stats.update_messages;
+            }
+
+            stats.book_updates_received +=
+                parsed.book_message->updates.size();
 
             const ReconstructionResult result = reconstructor.process(
                 *parsed.book_message,
@@ -102,6 +167,16 @@ int main()
                 sequence_tracker.observe(parsed.sequence_num);
             }
 
+            if (result.applied)
+            {
+                stats.book_updates_applied +=
+                    parsed.book_message->updates.size();
+            }
+            else
+            {
+                ++stats.ignored_l2_messages;
+            }
+
             if (
                 !result.applied
                 && parsed.book_message->type == BookEventType::Update
@@ -113,31 +188,83 @@ int main()
             {
                 std::cerr
                     << "message "
-                    << message_count
+                    << stats.lines_read
                     << " update received without a synchronized snapshot; "
                     << "message ignored\n";
             }
         }
         catch (const std::exception& e)
         {
+            ++stats.malformed_messages;
             std::cerr
                 << "message "
-                << message_count
+                << stats.lines_read
                 << " failed to parse/process: "
                 << e.what()
                 << '\n';
         }
     }
 
+    const auto replay_end = std::chrono::steady_clock::now();
+    const double elapsed_seconds =
+        std::chrono::duration<double>(replay_end - replay_start).count();
+
     const OrderBook& book = reconstructor.book();
 
-    std::cout << std::fixed << std::setprecision(2);
+    std::cout << "Replay statistics\n";
+    std::cout << "-----------------\n";
+    std::cout << "Lines read: " << stats.lines_read << '\n';
+    std::cout
+        << "Valid Coinbase messages: "
+        << stats.valid_coinbase_messages
+        << '\n';
+    std::cout << "Malformed messages: " << stats.malformed_messages << '\n';
+    std::cout << "Non-L2 messages: " << stats.non_l2_messages << '\n';
+    std::cout << "L2 messages: " << stats.l2_messages << '\n';
+    std::cout << "Snapshots: " << stats.snapshots << '\n';
+    std::cout << "Update messages: " << stats.update_messages << '\n';
+    std::cout
+        << "Book updates received: "
+        << stats.book_updates_received
+        << '\n';
+    std::cout
+        << "Book updates applied: "
+        << stats.book_updates_applied
+        << '\n';
+    std::cout << "Sequence gaps: " << stats.sequence_gaps << '\n';
+    std::cout
+        << "Duplicate messages: "
+        << stats.duplicate_messages
+        << '\n';
+    std::cout << "Stale messages: " << stats.stale_messages << '\n';
+    std::cout
+        << "Ignored L2 messages: "
+        << stats.ignored_l2_messages
+        << '\n';
 
-    std::cout << "Messages processed: " << message_count << '\n';
-    std::cout << "L2 messages: " << l2_messages << '\n';
-    std::cout << "Sequence gaps: " << sequence_gaps << '\n';
-    std::cout << "Duplicate messages: " << duplicate_messages << '\n';
-    std::cout << "Stale messages: " << stale_messages << '\n';
+    std::cout << std::fixed << std::setprecision(6);
+    std::cout << "Replay elapsed: " << elapsed_seconds << " s\n";
+
+    std::cout << std::setprecision(2);
+    std::cout
+        << "Valid messages/sec: "
+        << per_second(stats.valid_coinbase_messages, elapsed_seconds)
+        << '\n';
+    std::cout
+        << "L2 messages/sec: "
+        << per_second(stats.l2_messages, elapsed_seconds)
+        << '\n';
+    std::cout
+        << "Book updates received/sec: "
+        << per_second(stats.book_updates_received, elapsed_seconds)
+        << '\n';
+    std::cout
+        << "Book updates applied/sec: "
+        << per_second(stats.book_updates_applied, elapsed_seconds)
+        << '\n';
+
+    std::cout << "\nBook state\n";
+    std::cout << "----------\n";
     std::cout << "Bid levels: " << book.bid_levels() << '\n';
     std::cout << "Ask levels: " << book.ask_levels() << '\n';
 
