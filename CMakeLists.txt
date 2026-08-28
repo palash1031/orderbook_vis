@@ -12,9 +12,12 @@ find_package(OpenSSL REQUIRED)
 
 add_library(orderbook_core
     src/order_book.cpp
+    src/coinbase_parser.cpp
 )
 
 target_include_directories(orderbook_core PUBLIC include)
+
+target_link_libraries(orderbook_core PUBLIC Boost::json)
 
 add_executable(orderbook
     src/main.cpp
@@ -31,9 +34,6 @@ add_executable(replay
     src/replay.cpp
 )
 
-target_include_directories(replay PRIVATE ${Boost_INCLUDE_DIRS})
-
 target_link_libraries(replay PRIVATE
-    Boost::json
     orderbook_core
 )
