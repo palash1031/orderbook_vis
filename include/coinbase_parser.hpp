@@ -1,5 +1,7 @@
 #pragma once
 
+#include "book_types.hpp"
+
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -7,7 +9,7 @@
 
 struct BookUpdate
 {
-    std::string side;
+    BookSide side;
     double price;
     double quantity;
 };

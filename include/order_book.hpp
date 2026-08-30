@@ -1,9 +1,10 @@
 #pragma once
 
+#include "book_types.hpp"
+
 #include <cstddef>
 #include <map>
 #include <optional>
-#include <string>
 
 class OrderBook
 {
@@ -14,7 +15,7 @@ public:
     void clear();
 
     void apply_update(
-        const std::string& side,
+        BookSide side,
         Price price,
         Quantity quantity
     );
