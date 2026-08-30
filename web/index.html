@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Local Coinbase Level 2 order book heatmap replay viewer">
-  <title>Depthfield — Order Book Replay</title>
+  <meta name="description" content="Local Coinbase Level 2 order book heatmap viewer">
+  <title>Depthfield — Order Book Heatmap</title>
   <link rel="stylesheet" href="/styles.css">
   <script src="/app.js" defer></script>
 </head>
@@ -14,7 +14,7 @@
       <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
       <span>
         <strong>DEPTHFIELD</strong>
-        <small>ORDER BOOK REPLAY</small>
+        <small id="stream-mode-label">ORDER BOOK STREAM</small>
       </span>
     </a>
 
@@ -26,7 +26,7 @@
 
     <div class="connection" id="connection-state" role="status">
       <span class="status-light"></span>
-      <span>Loading replay</span>
+      <span>Connecting to stream</span>
     </div>
   </header>
 
@@ -38,7 +38,7 @@
           <h1 id="chart-title">Resting depth</h1>
         </div>
 
-        <dl class="metrics" aria-label="Replay summary">
+        <dl class="metrics" aria-label="Heatmap stream summary">
           <div>
             <dt>Window</dt>
             <dd id="window-duration">—</dd>
@@ -58,7 +58,7 @@
         </dl>
       </div>
 
-      <div class="playback-bar" aria-label="Replay playback controls">
+      <div class="playback-bar" aria-label="Heatmap stream controls">
         <button
           class="transport-button primary"
           id="play-toggle"
@@ -96,7 +96,7 @@
           tabindex="0"
           aria-label="Order book liquidity heatmap. Move the pointer over the chart for time, price, bid, and ask depth."
         >Your browser does not support canvas.</canvas>
-        <div class="chart-message" id="chart-message">Connecting to replay stream…</div>
+        <div class="chart-message" id="chart-message">Connecting to heatmap stream…</div>
         <div class="tooltip" id="tooltip" hidden></div>
       </div>
 

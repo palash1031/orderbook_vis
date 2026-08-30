@@ -23,11 +23,25 @@ add_library(orderbook_core
     src/replay_stream.cpp
     src/recorder_config.cpp
     src/replay_config.cpp
+    src/live_heatmap_engine.cpp
+    src/live_stream.cpp
 )
 
 target_include_directories(orderbook_core PUBLIC include)
 
 target_link_libraries(orderbook_core PUBLIC Boost::json)
+
+add_library(coinbase_transport
+    src/coinbase_level2_stream.cpp
+)
+
+target_include_directories(coinbase_transport PUBLIC include)
+
+target_link_libraries(coinbase_transport PUBLIC
+    orderbook_core
+    OpenSSL::SSL
+    OpenSSL::Crypto
+)
 
 add_executable(orderbook
     src/main.cpp
@@ -36,9 +50,7 @@ add_executable(orderbook
 target_include_directories(orderbook PRIVATE ${Boost_INCLUDE_DIRS})
 
 target_link_libraries(orderbook PRIVATE
-    orderbook_core
-    OpenSSL::SSL
-    OpenSSL::Crypto
+    coinbase_transport
 )
 
 add_executable(replay
@@ -58,7 +70,7 @@ target_compile_definitions(heatmap_viewer PRIVATE
 )
 
 target_link_libraries(heatmap_viewer PRIVATE
-    orderbook_core
+    coinbase_transport
     Threads::Threads
 )
 
@@ -84,6 +96,8 @@ if(BUILD_TESTING)
         tests/replay_stream_tests.cpp
         tests/recorder_config_tests.cpp
         tests/replay_config_tests.cpp
+        tests/live_heatmap_engine_tests.cpp
+        tests/live_stream_tests.cpp
     )
 
     target_link_libraries(orderbook_tests PRIVATE

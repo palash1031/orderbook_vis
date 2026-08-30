@@ -7,6 +7,7 @@
 #include <limits>
 #include <optional>
 #include <ostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -31,6 +32,39 @@ void write_quantities(
 
     output << ']';
 }
+
+void write_column(std::ostream& output, const HeatmapColumn& column)
+{
+    const auto timestamp_nanoseconds =
+        column.timestamp.time_since_epoch().count();
+    const auto timestamp_milliseconds =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            column.timestamp.time_since_epoch()
+        ).count();
+
+    output
+        << R"({"timestamp_ns":")"
+        << timestamp_nanoseconds
+        << R"(","timestamp_ms":)"
+        << timestamp_milliseconds
+        << R"(,"first_price":)"
+        << column.first_price
+        << R"(,"mid_price":)"
+        << column.mid_price
+        << R"(,"bids":)";
+    write_quantities(output, column.bid_quantities);
+    output << R"(,"asks":)";
+    write_quantities(output, column.ask_quantities);
+    output << '}';
+}
+}
+
+std::string serialize_heatmap_column(const HeatmapColumn& column)
+{
+    std::ostringstream output;
+    output << std::setprecision(std::numeric_limits<double>::max_digits10);
+    write_column(output, column);
+    return output.str();
 }
 
 void write_heatmap_json(
@@ -72,28 +106,7 @@ void write_heatmap_json(
             output << ',';
         }
 
-        const HeatmapColumn& column = columns[index];
-        const auto timestamp_nanoseconds =
-            column.timestamp.time_since_epoch().count();
-        const auto timestamp_milliseconds =
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                column.timestamp.time_since_epoch()
-            ).count();
-
-        output
-            << R"({"timestamp_ns":")"
-            << timestamp_nanoseconds
-            << R"(","timestamp_ms":)"
-            << timestamp_milliseconds
-            << R"(,"first_price":)"
-            << column.first_price
-            << R"(,"mid_price":)"
-            << column.mid_price
-            << R"(,"bids":)";
-        write_quantities(output, column.bid_quantities);
-        output << R"(,"asks":)";
-        write_quantities(output, column.ask_quantities);
-        output << '}';
+        write_column(output, columns[index]);
     }
 
     output << "]}";

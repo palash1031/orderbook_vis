@@ -236,6 +236,10 @@ h2 { font-size: 18px; }
   background: rgba(7, 11, 17, 0.72);
 }
 
+.playback-bar.live-mode {
+  grid-template-columns: minmax(180px, 1fr);
+}
+
 .transport-button {
   min-width: 70px;
   min-height: 34px;
@@ -632,6 +636,10 @@ input[type="range"]::-webkit-slider-thumb {
   .playback-bar {
     grid-template-columns: auto auto 1fr;
     padding: 12px 14px;
+  }
+
+  .playback-bar.live-mode {
+    grid-template-columns: 1fr;
   }
 
   .timeline {

@@ -1,7 +1,7 @@
 # Order Book Heatmap
 
 A C++20 Coinbase Level 2 recorder, order-book reconstructor, and browser-based
-liquidity heatmap replay viewer.
+live/replay liquidity heatmap viewer.
 
 ## Build
 
@@ -30,6 +30,26 @@ name follows the product (`ETH-USD` becomes `eth_usd.jsonl`).
 
 Stop the recorder with `Ctrl-C`.
 
+## View a live heatmap
+
+Start the loopback-only viewer with a Coinbase product and open
+[http://127.0.0.1:8080](http://127.0.0.1:8080):
+
+```sh
+./build/heatmap_viewer --live --product SOL-USD
+./build/heatmap_viewer --live --product DOGE-USD --price-bin 0.0001
+```
+
+`BTC-USD` and automatic product-aware price bins remain the defaults. The C++
+process connects to Coinbase, validates message sequence, reconstructs the Level
+2 book, samples the rolling heatmap, and fans columns out to browser clients over
+`/ws/heatmap`. The browser never connects to Coinbase directly. A late browser
+receives the retained rolling window before following new columns.
+
+The dashboard marks a detected sequence gap and waits for a fresh snapshot
+before resuming. Automatic network reconnect and resubscription are not yet
+implemented, so restart the viewer after a Coinbase connection failure.
+
 ## Generate and view a replay heatmap
 
 First replay a capture and export its rolling heatmap history:
@@ -45,7 +65,7 @@ that resolution when the first two-sided book arrives. Automatic sizing is
 price-aware but does not query Coinbase tick-size metadata; use a positive,
 finite numeric `--price-bin` override when a market needs a specific grid.
 
-Then start the loopback-only viewer:
+Then start the viewer:
 
 ```sh
 ./build/heatmap_viewer --heatmap heatmap.json

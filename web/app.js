@@ -8,6 +8,7 @@ const tooltip = document.querySelector("#tooltip");
 const connection = document.querySelector("#connection-state");
 
 const controls = {
+  playbackBar: document.querySelector(".playback-bar"),
   play: document.querySelector("#play-toggle"),
   restartPlayback: document.querySelector("#restart-playback"),
   speed: document.querySelector("#speed-control"),
@@ -33,6 +34,8 @@ const cursorFields = {
 const state = {
   socket: null,
   data: null,
+  streamMode: "replay",
+  nextColumnIndex: 0,
   playbackStatus: "connecting",
   position: 0,
   speed: 1,
@@ -111,10 +114,23 @@ function setConnectionStatus(kind, label) {
 
 function validateHello(payload) {
   if (payload?.type !== "hello" || payload.schema_version !== 1) {
-    throw new Error("Unsupported replay stream metadata");
+    throw new Error("Unsupported heatmap stream metadata");
   }
-  if (!Number.isInteger(payload.total_columns) || payload.total_columns <= 0) {
+  const streamMode = payload.stream_mode ?? "replay";
+  if (streamMode !== "replay" && streamMode !== "live") {
+    throw new Error("Heatmap stream mode is invalid");
+  }
+  if (
+    streamMode === "replay"
+    && (!Number.isInteger(payload.total_columns) || payload.total_columns <= 0)
+  ) {
     throw new Error("Replay stream contains no columns");
+  }
+  if (
+    streamMode === "live"
+    && (!Number.isInteger(payload.first_column_index) || payload.first_column_index < 0)
+  ) {
+    throw new Error("Live stream column position is invalid");
   }
   if (
     !Number.isInteger(payload.config?.price_bin_count)
@@ -122,9 +138,9 @@ function validateHello(payload) {
     || !Number.isFinite(payload.config.price_bin_size)
     || payload.config.price_bin_size <= 0
   ) {
-    throw new Error("Replay stream price-bin configuration is invalid");
+    throw new Error("Heatmap stream price-bin configuration is invalid");
   }
-  return payload;
+  return { ...payload, stream_mode: streamMode };
 }
 
 function validateColumn(column) {
@@ -139,13 +155,16 @@ function validateColumn(column) {
     || column.bids.length !== count
     || column.asks.length !== count
   ) {
-    throw new Error("Replay stream sent an invalid heatmap column");
+    throw new Error("Heatmap stream sent an invalid column");
   }
   return column;
 }
 
-function initializeReplay(metadata) {
+function initializeStream(metadata) {
   const hello = validateHello(metadata);
+  const live = hello.stream_mode === "live";
+  state.streamMode = hello.stream_mode;
+  state.nextColumnIndex = live ? hello.first_column_index : 0;
   state.data = {
     product_id: hello.product_id,
     config: hello.config,
@@ -153,13 +172,23 @@ function initializeReplay(metadata) {
     summary: {
       peak: hello.peak_depth,
       start: hello.start_timestamp_ms,
-      end: hello.end_timestamp_ms,
-      duration: hello.end_timestamp_ms - hello.start_timestamp_ms,
-      total: hello.total_columns,
+      end: live ? hello.start_timestamp_ms : hello.end_timestamp_ms,
+      duration: live ? 0 : hello.end_timestamp_ms - hello.start_timestamp_ms,
+      total: live ? null : hello.total_columns,
     },
   };
-  state.position = 0;
-  state.playbackStatus = "paused";
+  state.position = state.nextColumnIndex;
+  state.playbackStatus = live ? "connecting" : "paused";
+  controls.playbackBar.classList.toggle("live-mode", live);
+  controls.play.hidden = live;
+  controls.restartPlayback.hidden = live;
+  controls.speed.hidden = live;
+  document.querySelector("#stream-mode-label").textContent = live
+    ? "LIVE ORDER BOOK"
+    : "ORDER BOOK REPLAY";
+  document.querySelector("#chart-title").textContent = live
+    ? "Live resting depth"
+    : "Resting depth";
   updateSummary();
   updatePlaybackUi();
   queueRender();
@@ -169,16 +198,27 @@ function updateSummary() {
   if (!state.data) return;
   const latest = state.data.columns.at(-1);
   const { summary } = state.data;
+  const live = state.streamMode === "live";
+
+  if (live && latest) {
+    summary.start = state.data.columns[0].timestamp_ms;
+    summary.end = latest.timestamp_ms;
+    summary.duration = Math.max(0, summary.end - summary.start);
+  }
 
   document.querySelector("#product-id").textContent = state.data.product_id || "UNKNOWN";
   document.querySelector("#last-mid").textContent = latest
     ? formatPrice(latest.mid_price)
     : "—";
   document.querySelector("#window-duration").textContent = formatDuration(summary.duration);
-  document.querySelector("#column-count").textContent = `${state.data.columns.length.toLocaleString()} / ${summary.total.toLocaleString()}`;
+  document.querySelector("#column-count").textContent = live
+    ? `${state.data.columns.length.toLocaleString()} live`
+    : `${state.data.columns.length.toLocaleString()} / ${summary.total.toLocaleString()}`;
   document.querySelector("#price-bin").textContent = `$${formatPrice(state.data.config.price_bin_size)}`;
   document.querySelector("#peak-depth").textContent = formatQuantity(summary.peak);
-  document.querySelector("#replay-range").textContent = `${formatTime(summary.start)} — ${formatTime(summary.end)} UTC`;
+  document.querySelector("#replay-range").textContent = live
+    ? `${formatTime(summary.start)} UTC — LIVE`
+    : `${formatTime(summary.start)} — ${formatTime(summary.end)} UTC`;
 }
 
 function updatePlaybackUi() {
@@ -189,6 +229,37 @@ function updatePlaybackUi() {
   );
   const total = state.data?.summary.total ?? 0;
   const latest = state.data?.columns.at(-1);
+
+  if (state.streamMode === "live") {
+    const retained = state.data?.columns.length ?? 0;
+    const capacity = state.data?.config.max_columns ?? 1;
+    controls.play.disabled = true;
+    controls.restartPlayback.disabled = true;
+    controls.speed.disabled = true;
+    controls.progress.max = Math.max(1, capacity);
+    controls.progress.value = retained;
+    controls.playbackProgress.textContent = `${retained.toLocaleString()} / ${capacity.toLocaleString()} window`;
+    controls.playbackTime.textContent = latest
+      ? `${formatTime(latest.timestamp_ms)} UTC`
+      : "Waiting for snapshot";
+
+    if (state.playbackStatus === "live") {
+      setConnectionStatus("ready", "Live market data");
+    } else if (state.playbackStatus === "gap") {
+      setConnectionStatus("error", "Sequence gap");
+    } else {
+      setConnectionStatus("", "Connecting to Coinbase");
+    }
+
+    if (!state.data || retained === 0) {
+      message.hidden = false;
+      message.textContent = "Waiting for Coinbase Level 2 snapshot…";
+    } else {
+      message.hidden = true;
+    }
+
+    return;
+  }
 
   controls.play.disabled = !ready;
   controls.restartPlayback.disabled = !ready;
@@ -534,6 +605,7 @@ function updateReading(event) {
 }
 
 function sendControl(action, fields = {}) {
+  if (state.streamMode === "live") return;
   if (!state.socket || state.socket.readyState !== WebSocket.OPEN) return;
   state.socket.send(JSON.stringify({ action, ...fields }));
 }
@@ -548,12 +620,47 @@ function resetStreamColumns() {
 }
 
 function handleColumn(payload) {
-  if (!state.data || payload.index !== state.data.columns.length) {
-    throw new Error("Replay stream column sequence is invalid");
+  if (!state.data) {
+    throw new Error("Heatmap column arrived before metadata");
   }
 
-  state.data.columns.push(validateColumn(payload.column));
-  state.position = payload.index + 1;
+  const column = validateColumn(payload.column);
+
+  if (state.streamMode === "live") {
+    if (payload.replace === true) {
+      if (
+        state.data.columns.length === 0
+        || payload.index !== state.nextColumnIndex - 1
+      ) {
+        throw new Error("Live stream replacement sequence is invalid");
+      }
+
+      state.data.columns[state.data.columns.length - 1] = column;
+    } else {
+      if (payload.index !== state.nextColumnIndex) {
+        throw new Error("Live stream column sequence is invalid");
+      }
+
+      state.data.columns.push(column);
+      state.nextColumnIndex += 1;
+
+      if (state.data.columns.length > state.data.config.max_columns) {
+        state.data.columns.shift();
+      }
+    }
+
+    state.position = state.nextColumnIndex;
+    const columnPeak = Math.max(...column.bids, ...column.asks);
+    state.data.summary.peak = Math.max(state.data.summary.peak, columnPeak);
+  } else {
+    if (payload.index !== state.data.columns.length) {
+      throw new Error("Replay stream column sequence is invalid");
+    }
+
+    state.data.columns.push(column);
+    state.position = payload.index + 1;
+  }
+
   updateSummary();
   updatePlaybackUi();
   queueRender();
@@ -565,7 +672,10 @@ function handlePlaybackState(payload) {
     throw new Error("Replay stream sent invalid playback state");
   }
 
-  if (payload.position < state.data.columns.length) {
+  if (
+    state.streamMode === "replay"
+    && payload.position < state.data.columns.length
+  ) {
     state.data.columns.splice(payload.position);
     clearReading();
   }
@@ -582,7 +692,7 @@ function handleStreamMessage(event) {
   const payload = JSON.parse(event.data);
 
   if (payload.type === "hello") {
-    initializeReplay(payload);
+    initializeStream(payload);
   } else if (payload.type === "column") {
     handleColumn(payload);
   } else if (payload.type === "state") {
@@ -590,29 +700,31 @@ function handleStreamMessage(event) {
   } else if (payload.type === "reset") {
     resetStreamColumns();
   } else if (payload.type === "error") {
-    setConnectionStatus("error", payload.message || "Replay control failed");
+    setConnectionStatus("error", payload.message || "Heatmap stream failed");
+    message.hidden = false;
+    message.textContent = payload.message || "Heatmap stream failed";
   }
 }
 
-function connectReplay() {
+function connectStream() {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const socket = new WebSocket(`${protocol}//${window.location.host}/ws/replay`);
+  const socket = new WebSocket(`${protocol}//${window.location.host}/ws/heatmap`);
   state.socket = socket;
 
   socket.addEventListener("open", () => {
-    setConnectionStatus("", "Loading replay");
+    setConnectionStatus("", "Loading heatmap stream");
   });
 
   socket.addEventListener("message", (event) => {
     try {
       handleStreamMessage(event);
     } catch (error) {
-      setConnectionStatus("error", "Invalid replay stream");
+      setConnectionStatus("error", "Invalid heatmap stream");
       message.hidden = false;
       message.textContent = error instanceof Error
         ? error.message
-        : "Unable to process replay stream";
-      socket.close(1002, "Invalid replay stream");
+        : "Unable to process heatmap stream";
+      socket.close(1002, "Invalid heatmap stream");
     }
   });
 
@@ -625,7 +737,7 @@ function connectReplay() {
 
     if (!state.data || state.data.columns.length === 0) {
       message.hidden = false;
-      message.textContent = "Replay stream disconnected";
+      message.textContent = "Heatmap stream disconnected";
     }
   });
 
@@ -710,4 +822,4 @@ function bindControls() {
 
 bindControls();
 queueRender();
-connectReplay();
+connectStream();

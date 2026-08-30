@@ -1,3 +1,8 @@
+#include "coinbase_level2_stream.hpp"
+#include "live_heatmap_engine.hpp"
+#include "live_stream.hpp"
+#include "recorder_config.hpp"
+#include "replay_config.hpp"
 #include "replay_stream.hpp"
 
 #include <boost/asio.hpp>
@@ -40,7 +45,10 @@ struct ViewerOptions
 {
     std::filesystem::path heatmap_path = "heatmap.json";
     std::filesystem::path web_root = ORDERBOOK_WEB_ROOT;
+    std::string product_id = "BTC-USD";
+    HeatmapConfig live_heatmap_config;
     std::uint16_t port = 8080;
+    bool live = false;
 };
 
 struct ViewerAssets
@@ -53,7 +61,10 @@ struct ViewerAssets
 struct ServerState
 {
     ViewerAssets assets;
-    ReplayStreamData replay;
+    std::optional<ReplayStreamData> replay;
+    std::shared_ptr<LiveStreamHub> live;
+    std::string metadata;
+    bool live_mode = false;
 };
 
 struct Route
@@ -67,7 +78,8 @@ void print_usage(const char* executable)
     std::cout
         << "Usage: "
         << executable
-        << " [--heatmap heatmap.json] [--port 8080] [--web-root web]\n";
+        << " [--heatmap heatmap.json | --live [--product BTC-USD]"
+        << " [--price-bin auto|SIZE]] [--port 8080] [--web-root web]\n";
 }
 
 std::uint16_t parse_port(std::string_view text)
@@ -95,6 +107,9 @@ std::uint16_t parse_port(std::string_view text)
 std::optional<ViewerOptions> parse_options(int argc, char* argv[])
 {
     ViewerOptions options;
+    bool heatmap_set = false;
+    bool product_set = false;
+    bool price_bin_set = false;
 
     for (int index = 1; index < argc; ++index)
     {
@@ -106,6 +121,17 @@ std::optional<ViewerOptions> parse_options(int argc, char* argv[])
             return std::nullopt;
         }
 
+        if (argument == "--live")
+        {
+            if (options.live)
+            {
+                throw std::invalid_argument("--live may be specified once");
+            }
+
+            options.live = true;
+            continue;
+        }
+
         if (index + 1 >= argc)
         {
             throw std::invalid_argument("Missing value for " + argument);
@@ -115,7 +141,15 @@ std::optional<ViewerOptions> parse_options(int argc, char* argv[])
 
         if (argument == "--heatmap")
         {
+            if (heatmap_set)
+            {
+                throw std::invalid_argument(
+                    "--heatmap may be specified once"
+                );
+            }
+
             options.heatmap_path = value;
+            heatmap_set = true;
         }
         else if (argument == "--port")
         {
@@ -125,10 +159,49 @@ std::optional<ViewerOptions> parse_options(int argc, char* argv[])
         {
             options.web_root = value;
         }
+        else if (argument == "--product")
+        {
+            if (product_set)
+            {
+                throw std::invalid_argument(
+                    "--product may be specified once"
+                );
+            }
+
+            options.product_id = normalize_product_id(value);
+            product_set = true;
+        }
+        else if (argument == "--price-bin")
+        {
+            if (price_bin_set)
+            {
+                throw std::invalid_argument(
+                    "--price-bin may be specified once"
+                );
+            }
+
+            options.live_heatmap_config.price_bin_size =
+                parse_price_bin_argument(value);
+            price_bin_set = true;
+        }
         else
         {
             throw std::invalid_argument("Unknown viewer option: " + argument);
         }
+    }
+
+    if (options.live && heatmap_set)
+    {
+        throw std::invalid_argument(
+            "--live and --heatmap select different stream sources"
+        );
+    }
+
+    if (!options.live && (product_set || price_bin_set))
+    {
+        throw std::invalid_argument(
+            "--product and --price-bin require --live"
+        );
     }
 
     return options;
@@ -154,7 +227,7 @@ std::string read_file(const std::filesystem::path& path)
     return content.str();
 }
 
-std::shared_ptr<const ServerState> load_state(const ViewerOptions& options)
+std::shared_ptr<ServerState> load_state(const ViewerOptions& options)
 {
     auto state = std::make_shared<ServerState>();
     state->assets = {
@@ -162,7 +235,24 @@ std::shared_ptr<const ServerState> load_state(const ViewerOptions& options)
         read_file(options.web_root / "styles.css"),
         read_file(options.web_root / "app.js")
     };
-    state->replay = parse_replay_stream(read_file(options.heatmap_path));
+    state->live_mode = options.live;
+
+    if (options.live)
+    {
+        state->live = std::make_shared<LiveStreamHub>();
+        json::object metadata;
+        metadata["type"] = "metadata";
+        metadata["stream_mode"] = "live";
+        metadata["product_id"] = options.product_id;
+        metadata["status"] = "connecting";
+        state->metadata = json::serialize(metadata);
+    }
+    else
+    {
+        state->replay = parse_replay_stream(read_file(options.heatmap_path));
+        state->metadata = state->replay->hello_message_json;
+    }
+
     return state;
 }
 
@@ -187,7 +277,7 @@ std::optional<Route> route_request(
 
     if (target == "/api/metadata")
     {
-        return Route{&state.replay.hello_message_json, "application/json"};
+        return Route{&state.metadata, "application/json"};
     }
 
     return std::nullopt;
@@ -227,7 +317,11 @@ http::response<http::string_body> make_response(
     {
         response.result(http::status::ok);
         response.set(http::field::content_type, "application/json");
-        response.body() = R"({"status":"ok","stream":"/ws/replay"})";
+        json::object health;
+        health["status"] = "ok";
+        health["stream"] = "/ws/heatmap";
+        health["mode"] = state.live_mode ? "live" : "replay";
+        response.body() = json::serialize(health);
     }
     else
     {
@@ -284,6 +378,94 @@ bool write_websocket_message(
     stream.text(true);
     stream.write(asio::buffer(message), error);
     return !error;
+}
+
+std::optional<std::string> coinbase_error_message(
+    std::string_view raw_message)
+{
+    try
+    {
+        const json::object& message = json::parse(raw_message).as_object();
+        const auto* type = message.if_contains("type");
+        const auto* channel = message.if_contains("channel");
+        const bool is_error =
+            (type && type->is_string() && type->as_string() == "error")
+            || (
+                channel
+                && channel->is_string()
+                && channel->as_string() == "error"
+            );
+
+        if (!is_error)
+        {
+            return std::nullopt;
+        }
+
+        for (const char* field : {"message", "error", "reason"})
+        {
+            const auto* value = message.if_contains(field);
+
+            if (value && value->is_string())
+            {
+                const auto& text = value->as_string();
+                return std::string(text.c_str(), text.size());
+            }
+        }
+
+        return std::string("Coinbase rejected the live subscription");
+    }
+    catch (const std::exception&)
+    {
+        return std::nullopt;
+    }
+}
+
+void run_live_source(
+    std::string product_id,
+    HeatmapConfig heatmap_config,
+    std::shared_ptr<LiveStreamHub> hub)
+{
+    try
+    {
+        LiveHeatmapEngine engine(product_id, std::move(heatmap_config));
+        CoinbaseLevel2Stream coinbase(product_id);
+        std::cout
+            << "Coinbase live source connected for "
+            << product_id
+            << '\n';
+
+        while (true)
+        {
+            const std::string message = coinbase.read();
+
+            if (const auto error = coinbase_error_message(message))
+            {
+                hub->publish_error(*error);
+                std::cerr << "Coinbase subscription error: " << *error << '\n';
+                return;
+            }
+
+            try
+            {
+                const LiveHeatmapResult result = engine.process(message);
+                hub->publish(engine, result);
+            }
+            catch (const std::exception& error)
+            {
+                std::cerr
+                    << "Coinbase live message ignored: "
+                    << error.what()
+                    << '\n';
+            }
+        }
+    }
+    catch (const std::exception& error)
+    {
+        const std::string message =
+            std::string("Coinbase live source disconnected: ") + error.what();
+        hub->publish_error(message);
+        std::cerr << message << '\n';
+    }
 }
 
 void run_replay_websocket(
@@ -444,6 +626,73 @@ void run_replay_websocket(
     }
 }
 
+void run_live_websocket(
+    tcp::socket socket,
+    http::request<http::string_body> request,
+    const std::shared_ptr<LiveStreamHub>& hub)
+{
+    websocket::stream<tcp::socket> stream{std::move(socket)};
+    stream.set_option(websocket::stream_base::decorator(
+        [](websocket::response_type& response)
+        {
+            response.set(http::field::server, "orderbook-live-stream");
+        }
+    ));
+    stream.read_message_max(4 * 1024);
+    stream.accept(request);
+
+    const std::shared_ptr<LiveStreamSubscriber> subscriber = hub->subscribe();
+    beast::flat_buffer buffer;
+
+    while (true)
+    {
+        if (const auto message = subscriber->wait_for_message(
+                std::chrono::milliseconds{50}
+            ))
+        {
+            if (!write_websocket_message(stream, *message))
+            {
+                return;
+            }
+        }
+
+        beast::error_code error;
+        const std::size_t available = stream.next_layer().available(error);
+
+        if (error)
+        {
+            return;
+        }
+
+        if (available == 0)
+        {
+            continue;
+        }
+
+        stream.read(buffer, error);
+
+        if (error == websocket::error::closed)
+        {
+            return;
+        }
+
+        if (error)
+        {
+            return;
+        }
+
+        buffer.consume(buffer.size());
+
+        if (!write_websocket_message(
+                stream,
+                error_message("Playback controls are unavailable in live mode")
+            ))
+        {
+            return;
+        }
+    }
+}
+
 void handle_connection(
     tcp::socket socket,
     std::shared_ptr<const ServerState> state)
@@ -456,14 +705,29 @@ void handle_connection(
 
         if (
             websocket::is_upgrade(request)
-            && request.target() == "/ws/replay"
+            && (
+                request.target() == "/ws/heatmap"
+                || request.target() == "/ws/replay"
+            )
         )
         {
-            run_replay_websocket(
-                std::move(socket),
-                std::move(request),
-                state->replay
-            );
+            if (state->live_mode)
+            {
+                run_live_websocket(
+                    std::move(socket),
+                    std::move(request),
+                    state->live
+                );
+            }
+            else
+            {
+                run_replay_websocket(
+                    std::move(socket),
+                    std::move(request),
+                    *state->replay
+                );
+            }
+
             return;
         }
 
@@ -519,6 +783,17 @@ int main(int argc, char* argv[])
         }
 
         const std::shared_ptr<const ServerState> state = load_state(*options);
+
+        if (options->live)
+        {
+            std::thread(
+                run_live_source,
+                options->product_id,
+                options->live_heatmap_config,
+                state->live
+            ).detach();
+        }
+
         serve(*options, state);
     }
     catch (const std::exception& error)
