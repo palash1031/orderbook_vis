@@ -21,6 +21,8 @@ add_library(orderbook_core
     src/heatmap_history.cpp
     src/heatmap_json.cpp
     src/replay_stream.cpp
+    src/recorder_config.cpp
+    src/replay_config.cpp
 )
 
 target_include_directories(orderbook_core PUBLIC include)
@@ -34,6 +36,7 @@ add_executable(orderbook
 target_include_directories(orderbook PRIVATE ${Boost_INCLUDE_DIRS})
 
 target_link_libraries(orderbook PRIVATE
+    orderbook_core
     OpenSSL::SSL
     OpenSSL::Crypto
 )
@@ -79,6 +82,8 @@ if(BUILD_TESTING)
         tests/heatmap_history_tests.cpp
         tests/heatmap_json_tests.cpp
         tests/replay_stream_tests.cpp
+        tests/recorder_config_tests.cpp
+        tests/replay_config_tests.cpp
     )
 
     target_link_libraries(orderbook_tests PRIVATE

@@ -14,12 +14,19 @@ cmake --build build --parallel
 
 ## Record Level 2 data
 
-The recorder subscribes to the Coinbase `BTC-USD` Level 2 channel and writes
-one WebSocket message per line to `btc_usd.jsonl`.
+The recorder subscribes to a Coinbase Level 2 market and writes one WebSocket
+message per line. `BTC-USD` remains the default:
 
 ```sh
 ./build/orderbook
+./build/orderbook --product ETH-USD
+./build/orderbook --product SOL-USD --output sol_capture.jsonl
 ```
+
+Product IDs are trimmed, normalized to uppercase, and checked for `BASE-QUOTE`
+syntax before connecting. Coinbase remains authoritative about whether a
+syntactically valid product is actually listed. Without `--output`, the capture
+name follows the product (`ETH-USD` becomes `eth_usd.jsonl`).
 
 Stop the recorder with `Ctrl-C`.
 
@@ -29,7 +36,14 @@ First replay a capture and export its rolling heatmap history:
 
 ```sh
 ./build/replay btc_usd.jsonl --heatmap-output heatmap.json
+./build/replay doge_usd.jsonl --heatmap-output heatmap.json --price-bin 0.0001
 ```
+
+The default `--price-bin auto` mode targets a total price span of approximately
+0.25% across 201 rows, rounds to a readable 1/2/2.5/5 increment, and freezes
+that resolution when the first two-sided book arrives. Automatic sizing is
+price-aware but does not query Coinbase tick-size metadata; use a positive,
+finite numeric `--price-bin` override when a market needs a specific grid.
 
 Then start the loopback-only viewer:
 

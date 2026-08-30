@@ -2,6 +2,7 @@
 #include "coinbase_parser.hpp"
 #include "heatmap_history.hpp"
 #include "heatmap_json.hpp"
+#include "replay_config.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -9,8 +10,11 @@
 #include <iomanip>
 #include <iostream>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace
 {
@@ -32,60 +36,13 @@ struct ReplayStats
     std::uint64_t heatmap_samples = 0;
 };
 
-struct ReplayOptions
-{
-    std::string input_path = "btc_usd.jsonl";
-    std::optional<std::string> heatmap_output_path;
-};
-
 void print_usage(const char* executable)
 {
     std::cout
         << "Usage: "
         << executable
-        << " [capture.jsonl] [--heatmap-output heatmap.json]\n";
-}
-
-std::optional<ReplayOptions> parse_options(int argc, char* argv[])
-{
-    ReplayOptions options;
-    bool input_path_set = false;
-
-    for (int index = 1; index < argc; ++index)
-    {
-        const std::string argument = argv[index];
-
-        if (argument == "--help" || argument == "-h")
-        {
-            print_usage(argv[0]);
-            return std::nullopt;
-        }
-
-        if (argument == "--heatmap-output")
-        {
-            if (index + 1 >= argc || options.heatmap_output_path)
-            {
-                throw std::invalid_argument(
-                    "--heatmap-output requires exactly one path"
-                );
-            }
-
-            options.heatmap_output_path = argv[++index];
-            continue;
-        }
-
-        if (argument.starts_with('-') || input_path_set)
-        {
-            throw std::invalid_argument(
-                "Unexpected replay argument: " + argument
-            );
-        }
-
-        options.input_path = argument;
-        input_path_set = true;
-    }
-
-    return options;
+        << " [capture.jsonl] [--heatmap-output heatmap.json]"
+        << " [--price-bin auto|SIZE]\n";
 }
 
 double per_second(std::uint64_t count, double elapsed_seconds)
@@ -101,11 +58,19 @@ double per_second(std::uint64_t count, double elapsed_seconds)
 
 int main(int argc, char* argv[])
 {
-    std::optional<ReplayOptions> parsed_options;
+    ReplayOptions options;
 
     try
     {
-        parsed_options = parse_options(argc, argv);
+        std::vector<std::string_view> arguments;
+        arguments.reserve(static_cast<std::size_t>(argc - 1));
+
+        for (int index = 1; index < argc; ++index)
+        {
+            arguments.emplace_back(argv[index]);
+        }
+
+        options = parse_replay_options(arguments);
     }
     catch (const std::exception& error)
     {
@@ -114,12 +79,12 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    if (!parsed_options)
+    if (options.show_help)
     {
+        print_usage(argv[0]);
         return 0;
     }
 
-    const ReplayOptions& options = *parsed_options;
     std::ifstream input_file(options.input_path);
 
     if (!input_file.is_open())
@@ -130,7 +95,7 @@ int main(int argc, char* argv[])
 
     BookReconstructor reconstructor;
     SequenceTracker sequence_tracker;
-    HeatmapHistory heatmap;
+    HeatmapHistory heatmap(options.heatmap_config);
 
     std::string line;
     std::string product_id;
@@ -372,6 +337,16 @@ int main(int argc, char* argv[])
         << "Heatmap columns retained: "
         << heatmap.columns().size()
         << '\n';
+    std::cout << "Heatmap price bin: ";
+
+    if (const auto price_bin = heatmap.resolved_price_bin_size())
+    {
+        std::cout << *price_bin << '\n';
+    }
+    else
+    {
+        std::cout << "unresolved\n";
+    }
 
     if (options.heatmap_output_path)
     {

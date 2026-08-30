@@ -1,3 +1,5 @@
+#include "recorder_config.hpp"
+
 #include <boost/asio.hpp>
 #include <boost/asio/ssl.hpp>
 #include <boost/beast.hpp>
@@ -9,6 +11,8 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace asio = boost::asio;
 namespace beast = boost::beast;
@@ -17,8 +21,46 @@ namespace ssl = asio::ssl;
 
 using tcp = asio::ip::tcp;
 
-int main()
+namespace
 {
+void print_usage(const char* executable)
+{
+    std::cout
+        << "Usage: "
+        << executable
+        << " [--product BTC-USD] [--output btc_usd.jsonl]\n";
+}
+}
+
+int main(int argc, char* argv[])
+{
+    RecorderOptions options;
+
+    try
+    {
+        std::vector<std::string_view> arguments;
+        arguments.reserve(static_cast<std::size_t>(argc - 1));
+
+        for (int index = 1; index < argc; ++index)
+        {
+            arguments.emplace_back(argv[index]);
+        }
+
+        options = parse_recorder_options(arguments);
+    }
+    catch (const std::exception& error)
+    {
+        std::cerr << "Error: " << error.what() << '\n';
+        print_usage(argv[0]);
+        return 1;
+    }
+
+    if (options.show_help)
+    {
+        print_usage(argv[0]);
+        return 0;
+    }
+
     try
     {
         asio::io_context ioc;
@@ -79,24 +121,28 @@ int main()
 
         std::cout << "WebSocket connected\n";
 
-        // Coinbase subscription
-        std::string subscription = R"({
-            "type": "subscribe",
-            "channel": "level2",
-            "product_ids": ["BTC-USD"]
-        })";
+        const std::string subscription = make_level2_subscription(
+            options.product_id
+        );
 
         ws.write(asio::buffer(subscription));
 
-        std::cout << "Subscribed to BTC-USD level2\n";
+        std::cout
+            << "Subscription requested for "
+            << options.product_id
+            << " level2\n";
 
         // Open output file
-        std::ofstream output_file("btc_usd.jsonl");
+        std::ofstream output_file(options.output_path);
 
         if (!output_file.is_open())
         {
-            throw std::runtime_error("Failed to open output file");
+            throw std::runtime_error(
+                "Failed to open " + options.output_path
+            );
         }
+
+        std::cout << "Recording to " << options.output_path << '\n';
 
         // Buffer for incoming WebSocket messages
         beast::flat_buffer buffer;

@@ -31,6 +31,15 @@ OrderBook populated_book()
     book.apply_update(BookSide::Offer, 101.7, 4.0);
     return book;
 }
+
+OrderBook book_at_midpoint(double midpoint)
+{
+    const double half_spread = midpoint * 0.00001;
+    OrderBook book;
+    book.apply_update(BookSide::Bid, midpoint - half_spread, 1.0);
+    book.apply_update(BookSide::Offer, midpoint + half_spread, 1.0);
+    return book;
+}
 }
 
 TEST(HeatmapHistoryTest, AggregatesDepthIntoPriceBins)
@@ -135,6 +144,71 @@ TEST(HeatmapHistoryTest, WaitsForBothSidesOfBook)
     EXPECT_EQ(history.columns().size(), 1U);
 }
 
+TEST(HeatmapHistoryTest, AutomaticResolutionWaitsForTwoSidedBook)
+{
+    HeatmapHistory history;
+    OrderBook book;
+    book.apply_update(BookSide::Bid, 79'999.0, 1.0);
+
+    EXPECT_FALSE(history.resolved_price_bin_size().has_value());
+    EXPECT_FALSE(history.sample(at_milliseconds(0), book));
+    EXPECT_FALSE(history.resolved_price_bin_size().has_value());
+
+    book.apply_update(BookSide::Offer, 80'001.0, 1.0);
+    EXPECT_TRUE(history.sample(at_milliseconds(1), book));
+    ASSERT_TRUE(history.resolved_price_bin_size().has_value());
+    EXPECT_DOUBLE_EQ(*history.resolved_price_bin_size(), 1.0);
+}
+
+TEST(HeatmapHistoryTest, AutomaticResolutionScalesAcrossProducts)
+{
+    EXPECT_DOUBLE_EQ(automatic_price_bin_size(80'000.0, 201), 1.0);
+    EXPECT_DOUBLE_EQ(automatic_price_bin_size(4'000.0, 201), 0.05);
+    EXPECT_DOUBLE_EQ(automatic_price_bin_size(200.0, 201), 0.0025);
+    EXPECT_DOUBLE_EQ(automatic_price_bin_size(0.20, 201), 0.0000025);
+}
+
+TEST(HeatmapHistoryTest, AutomaticResolutionFreezesAcrossDiscontinuities)
+{
+    HeatmapHistory history;
+    history.sample(at_milliseconds(0), book_at_midpoint(80'000.0));
+    ASSERT_TRUE(history.resolved_price_bin_size().has_value());
+    EXPECT_DOUBLE_EQ(*history.resolved_price_bin_size(), 1.0);
+
+    history.mark_discontinuity();
+    history.sample(at_milliseconds(100), book_at_midpoint(4'000.0));
+
+    ASSERT_TRUE(history.resolved_price_bin_size().has_value());
+    EXPECT_DOUBLE_EQ(*history.resolved_price_bin_size(), 1.0);
+    ASSERT_EQ(history.columns().size(), 2U);
+    EXPECT_DOUBLE_EQ(history.columns().back().price_bin_size, 1.0);
+}
+
+TEST(HeatmapHistoryTest, ClearResetsAutomaticResolution)
+{
+    HeatmapHistory history;
+    history.sample(at_milliseconds(100), book_at_midpoint(80'000.0));
+    ASSERT_TRUE(history.resolved_price_bin_size().has_value());
+
+    history.clear();
+
+    EXPECT_TRUE(history.columns().empty());
+    EXPECT_FALSE(history.resolved_price_bin_size().has_value());
+    history.sample(at_milliseconds(0), book_at_midpoint(4'000.0));
+    ASSERT_TRUE(history.resolved_price_bin_size().has_value());
+    EXPECT_DOUBLE_EQ(*history.resolved_price_bin_size(), 0.05);
+}
+
+TEST(HeatmapHistoryTest, ClearPreservesManualResolution)
+{
+    HeatmapHistory history(test_config());
+    history.sample(at_milliseconds(100), populated_book());
+    history.clear();
+
+    ASSERT_TRUE(history.resolved_price_bin_size().has_value());
+    EXPECT_DOUBLE_EQ(*history.resolved_price_bin_size(), 1.0);
+}
+
 TEST(HeatmapHistoryTest, RejectsOutOfOrderObservations)
 {
     HeatmapHistory history(test_config());
@@ -171,6 +245,10 @@ TEST(HeatmapHistoryTest, ValidatesConfigurationAndIndices)
 
     config = test_config();
     config.time_bucket = std::chrono::nanoseconds{0};
+    EXPECT_THROW(HeatmapHistory history(config), std::invalid_argument);
+
+    config = test_config();
+    config.price_bin_size = 0.0;
     EXPECT_THROW(HeatmapHistory history(config), std::invalid_argument);
 
     HeatmapHistory history(test_config());

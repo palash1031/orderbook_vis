@@ -13,10 +13,17 @@ struct HeatmapConfig
 {
     std::chrono::nanoseconds time_bucket =
         std::chrono::milliseconds{100};
-    double price_bin_size = 1.0;
+    // nullopt selects a bin size from the first usable midpoint and freezes it
+    // for the current history session.
+    std::optional<double> price_bin_size;
     std::size_t price_bin_count = 201;
     std::size_t max_columns = 600;
 };
+
+double automatic_price_bin_size(
+    double midpoint,
+    std::size_t price_bin_count
+);
 
 struct HeatmapColumn
 {
@@ -41,11 +48,15 @@ public:
     bool sample(MarketTimestamp timestamp, const OrderBook& book);
 
     // Prevents the next valid sample from filling unknown time with stale
-    // depth after a feed gap or other loss of synchronization.
+    // depth after a feed gap. The selected price resolution is preserved.
     void mark_discontinuity() noexcept;
+
+    // Starts a fresh history session. Automatic resolution becomes unresolved
+    // again; an explicitly configured resolution remains available.
     void clear() noexcept;
 
     const HeatmapConfig& config() const noexcept;
+    std::optional<double> resolved_price_bin_size() const noexcept;
     const std::deque<HeatmapColumn>& columns() const noexcept;
 
 private:
@@ -58,6 +69,7 @@ private:
     void append(HeatmapColumn column);
 
     HeatmapConfig config_;
+    std::optional<double> resolved_price_bin_size_;
     std::deque<HeatmapColumn> columns_;
     std::optional<MarketTimestamp> last_observation_;
     bool carry_forward_ = true;

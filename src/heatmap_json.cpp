@@ -5,6 +5,7 @@
 #include <chrono>
 #include <iomanip>
 #include <limits>
+#include <optional>
 #include <ostream>
 #include <stdexcept>
 #include <string>
@@ -38,6 +39,16 @@ void write_heatmap_json(
     const HeatmapHistory& heatmap)
 {
     const HeatmapConfig& config = heatmap.config();
+    const std::optional<double> price_bin_size =
+        heatmap.resolved_price_bin_size();
+
+    if (!price_bin_size)
+    {
+        throw std::runtime_error(
+            "Cannot export a heatmap before price-bin resolution"
+        );
+    }
+
     output << std::setprecision(std::numeric_limits<double>::max_digits10);
     output
         << R"({"schema_version":1,"product_id":)"
@@ -45,7 +56,7 @@ void write_heatmap_json(
         << R"(,"config":{"time_bucket_ns":)"
         << config.time_bucket.count()
         << R"(,"price_bin_size":)"
-        << config.price_bin_size
+        << *price_bin_size
         << R"(,"price_bin_count":)"
         << config.price_bin_count
         << R"(,"max_columns":)"

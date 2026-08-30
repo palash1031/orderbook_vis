@@ -60,3 +60,32 @@ TEST(HeatmapJsonTest, WritesVersionedBrowserSafeDocument)
     EXPECT_DOUBLE_EQ(json::value_to<double>(bids[0]), 1.5);
     EXPECT_DOUBLE_EQ(json::value_to<double>(asks[2]), 2.5);
 }
+
+TEST(HeatmapJsonTest, ExportsResolvedNumericAutomaticPriceBin)
+{
+    HeatmapHistory heatmap;
+    OrderBook book;
+    book.apply_update(BookSide::Bid, 3'999.9, 1.0);
+    book.apply_update(BookSide::Offer, 4'000.1, 1.0);
+    ASSERT_TRUE(heatmap.sample(MarketTimestamp{}, book));
+
+    std::ostringstream output;
+    write_heatmap_json(output, "ETH-USD", heatmap);
+
+    const json::object document = json::parse(output.str()).as_object();
+    const json::value& price_bin_size =
+        document.at("config").as_object().at("price_bin_size");
+    EXPECT_TRUE(price_bin_size.is_number());
+    EXPECT_DOUBLE_EQ(json::value_to<double>(price_bin_size), 0.05);
+}
+
+TEST(HeatmapJsonTest, RejectsUnresolvedAutomaticPriceBin)
+{
+    HeatmapHistory heatmap;
+    std::ostringstream output;
+
+    EXPECT_THROW(
+        write_heatmap_json(output, "ETH-USD", heatmap),
+        std::runtime_error
+    );
+}

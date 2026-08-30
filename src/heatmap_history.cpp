@@ -9,6 +9,8 @@
 
 namespace
 {
+constexpr double automatic_price_span_fraction = 0.0025;
+
 double stable_floor(double value)
 {
     const double nearest_integer = std::round(value);
@@ -28,13 +30,13 @@ double stable_floor(double value)
 void accumulate_levels(
     const OrderBook::Levels& levels,
     double first_bin,
-    const HeatmapConfig& config,
+    double price_bin_size,
+    std::size_t price_bin_count,
     std::vector<double>& quantities)
 {
-    const double first_price = first_bin * config.price_bin_size;
+    const double first_price = first_bin * price_bin_size;
     const double end_price = first_price
-        + static_cast<double>(config.price_bin_count)
-            * config.price_bin_size;
+        + static_cast<double>(price_bin_count) * price_bin_size;
 
     for (
         auto level = levels.lower_bound(first_price);
@@ -43,13 +45,13 @@ void accumulate_levels(
     )
     {
         const double price_bin = stable_floor(
-            level->first / config.price_bin_size
+            level->first / price_bin_size
         );
         const double offset = price_bin - first_bin;
 
         if (
             offset >= 0.0
-            && offset < static_cast<double>(config.price_bin_count)
+            && offset < static_cast<double>(price_bin_count)
         )
         {
             quantities[static_cast<std::size_t>(offset)] +=
@@ -57,6 +59,58 @@ void accumulate_levels(
         }
     }
 }
+}
+
+double automatic_price_bin_size(
+    double midpoint,
+    std::size_t price_bin_count)
+{
+    if (!std::isfinite(midpoint) || midpoint <= 0.0)
+    {
+        throw std::invalid_argument(
+            "Automatic heatmap resolution requires a positive midpoint"
+        );
+    }
+
+    if (price_bin_count == 0)
+    {
+        throw std::invalid_argument(
+            "Automatic heatmap resolution requires price bins"
+        );
+    }
+
+    const double raw_bin_size = midpoint
+        * automatic_price_span_fraction
+        / static_cast<double>(price_bin_count);
+    const double magnitude = std::pow(
+        10.0,
+        std::floor(std::log10(raw_bin_size))
+    );
+    const double normalized = raw_bin_size / magnitude;
+    constexpr double nice_factors[] = {1.0, 2.0, 2.5, 5.0, 10.0};
+    double closest = nice_factors[0];
+
+    for (const double candidate : nice_factors)
+    {
+        if (
+            std::abs(candidate - normalized)
+            < std::abs(closest - normalized)
+        )
+        {
+            closest = candidate;
+        }
+    }
+
+    const double resolved = closest * magnitude;
+
+    if (!std::isfinite(resolved) || resolved <= 0.0)
+    {
+        throw std::invalid_argument(
+            "Automatic heatmap price-bin size is outside supported range"
+        );
+    }
+
+    return resolved;
 }
 
 double HeatmapColumn::price_at(std::size_t index) const
@@ -70,7 +124,8 @@ double HeatmapColumn::price_at(std::size_t index) const
 }
 
 HeatmapHistory::HeatmapHistory(HeatmapConfig config)
-    : config_(config)
+    : config_(config),
+      resolved_price_bin_size_(config.price_bin_size)
 {
     if (config_.time_bucket.count() <= 0)
     {
@@ -78,8 +133,11 @@ HeatmapHistory::HeatmapHistory(HeatmapConfig config)
     }
 
     if (
-        !std::isfinite(config_.price_bin_size)
-        || config_.price_bin_size <= 0.0
+        config_.price_bin_size
+        && (
+            !std::isfinite(*config_.price_bin_size)
+            || *config_.price_bin_size <= 0.0
+        )
     )
     {
         throw std::invalid_argument("Heatmap price-bin size must be positive");
@@ -113,6 +171,24 @@ bool HeatmapHistory::sample(
     }
 
     last_observation_ = timestamp;
+
+    if (!resolved_price_bin_size_)
+    {
+        const std::optional<OrderBook::Price> best_bid = book.best_bid();
+        const std::optional<OrderBook::Price> best_ask = book.best_ask();
+
+        if (!best_bid || !best_ask)
+        {
+            return false;
+        }
+
+        const double midpoint = *best_bid + (*best_ask - *best_bid) / 2.0;
+        resolved_price_bin_size_ = automatic_price_bin_size(
+            midpoint,
+            config_.price_bin_count
+        );
+    }
+
     const MarketTimestamp column_timestamp = bucket_start(timestamp);
     std::optional<HeatmapColumn> column = make_column(
         column_timestamp,
@@ -207,11 +283,17 @@ void HeatmapHistory::clear() noexcept
     columns_.clear();
     last_observation_.reset();
     carry_forward_ = true;
+    resolved_price_bin_size_ = config_.price_bin_size;
 }
 
 const HeatmapConfig& HeatmapHistory::config() const noexcept
 {
     return config_;
+}
+
+std::optional<double> HeatmapHistory::resolved_price_bin_size() const noexcept
+{
+    return resolved_price_bin_size_;
 }
 
 const std::deque<HeatmapColumn>& HeatmapHistory::columns() const noexcept
@@ -238,16 +320,23 @@ std::optional<HeatmapColumn> HeatmapHistory::make_column(
         throw std::invalid_argument("Heatmap midpoint must be finite");
     }
 
+    if (!resolved_price_bin_size_)
+    {
+        throw std::logic_error("Heatmap price-bin size is unresolved");
+    }
+
+    const double price_bin_size = *resolved_price_bin_size_;
+
     const double center_bin = stable_floor(
-        mid_price / config_.price_bin_size
+        mid_price / price_bin_size
     );
     const double first_bin = center_bin
         - static_cast<double>(config_.price_bin_count / 2);
 
     HeatmapColumn column;
     column.timestamp = timestamp;
-    column.first_price = first_bin * config_.price_bin_size;
-    column.price_bin_size = config_.price_bin_size;
+    column.first_price = first_bin * price_bin_size;
+    column.price_bin_size = price_bin_size;
     column.mid_price = mid_price;
     column.bid_quantities.resize(config_.price_bin_count);
     column.ask_quantities.resize(config_.price_bin_count);
@@ -255,13 +344,15 @@ std::optional<HeatmapColumn> HeatmapHistory::make_column(
     accumulate_levels(
         book.bids(),
         first_bin,
-        config_,
+        price_bin_size,
+        config_.price_bin_count,
         column.bid_quantities
     );
     accumulate_levels(
         book.asks(),
         first_bin,
-        config_,
+        price_bin_size,
+        config_.price_bin_count,
         column.ask_quantities
     );
 
