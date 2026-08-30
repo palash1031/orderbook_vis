@@ -58,13 +58,45 @@
         </dl>
       </div>
 
+      <div class="playback-bar" aria-label="Replay playback controls">
+        <button
+          class="transport-button primary"
+          id="play-toggle"
+          type="button"
+          disabled
+        >Play</button>
+        <button
+          class="transport-button"
+          id="restart-playback"
+          type="button"
+          disabled
+        >↺ Start</button>
+
+        <div class="timeline">
+          <progress id="replay-progress" max="1" value="0">0%</progress>
+          <div class="timeline-labels">
+            <span id="playback-time">—</span>
+            <span id="playback-progress">0 / 0</span>
+          </div>
+        </div>
+
+        <fieldset class="speed-control" id="speed-control" disabled>
+          <legend>Replay speed</legend>
+          <div class="segmented compact">
+            <button type="button" class="active" data-speed="1" aria-pressed="true">1×</button>
+            <button type="button" data-speed="5" aria-pressed="false">5×</button>
+            <button type="button" data-speed="20" aria-pressed="false">20×</button>
+          </div>
+        </fieldset>
+      </div>
+
       <div class="chart-frame" id="chart-frame">
         <canvas
           id="heatmap"
           tabindex="0"
           aria-label="Order book liquidity heatmap. Move the pointer over the chart for time, price, bid, and ask depth."
         >Your browser does not support canvas.</canvas>
-        <div class="chart-message" id="chart-message">Preparing depth map…</div>
+        <div class="chart-message" id="chart-message">Connecting to replay stream…</div>
         <div class="tooltip" id="tooltip" hidden></div>
       </div>
 

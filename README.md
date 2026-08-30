@@ -37,8 +37,13 @@ Then start the loopback-only viewer:
 ./build/heatmap_viewer --heatmap heatmap.json
 ```
 
-Open [http://127.0.0.1:8080](http://127.0.0.1:8080). The viewer provides:
+Open [http://127.0.0.1:8080](http://127.0.0.1:8080). The viewer streams one
+heatmap column at a time over a local WebSocket, paced by the recording's
+exchange timestamps. Each browser session has independent playback state. The
+viewer provides:
 
+- play/pause, restart, and 1x/5x/20x replay controls;
+- progress and replay-time readouts;
 - bid, ask, or combined liquidity display;
 - logarithmic intensity adjustment;
 - a configurable visible price window;

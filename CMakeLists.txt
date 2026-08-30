@@ -11,6 +11,7 @@ option(BUILD_BENCHMARKS "Build benchmarks" OFF)
 
 find_package(Boost REQUIRED COMPONENTS json)
 find_package(OpenSSL REQUIRED)
+find_package(Threads REQUIRED)
 
 add_library(orderbook_core
     src/order_book.cpp
@@ -19,6 +20,7 @@ add_library(orderbook_core
     src/book_reconstructor.cpp
     src/heatmap_history.cpp
     src/heatmap_json.cpp
+    src/replay_stream.cpp
 )
 
 target_include_directories(orderbook_core PUBLIC include)
@@ -54,6 +56,7 @@ target_compile_definitions(heatmap_viewer PRIVATE
 
 target_link_libraries(heatmap_viewer PRIVATE
     orderbook_core
+    Threads::Threads
 )
 
 include(CTest)
@@ -75,6 +78,7 @@ if(BUILD_TESTING)
         tests/sequence_tracker_tests.cpp
         tests/heatmap_history_tests.cpp
         tests/heatmap_json_tests.cpp
+        tests/replay_stream_tests.cpp
     )
 
     target_link_libraries(orderbook_tests PRIVATE

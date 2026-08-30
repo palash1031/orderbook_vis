@@ -8,13 +8,19 @@ const tooltip = document.querySelector("#tooltip");
 const connection = document.querySelector("#connection-state");
 
 const controls = {
+  play: document.querySelector("#play-toggle"),
+  restartPlayback: document.querySelector("#restart-playback"),
+  speed: document.querySelector("#speed-control"),
+  progress: document.querySelector("#replay-progress"),
+  playbackTime: document.querySelector("#playback-time"),
+  playbackProgress: document.querySelector("#playback-progress"),
   intensity: document.querySelector("#intensity"),
   intensityValue: document.querySelector("#intensity-value"),
   priceWindow: document.querySelector("#price-window"),
   priceWindowValue: document.querySelector("#price-window-value"),
   midline: document.querySelector("#midline"),
   side: document.querySelector("#side-control"),
-  reset: document.querySelector("#reset-view"),
+  resetView: document.querySelector("#reset-view"),
 };
 
 const cursorFields = {
@@ -25,7 +31,11 @@ const cursorFields = {
 };
 
 const state = {
+  socket: null,
   data: null,
+  playbackStatus: "connecting",
+  position: 0,
+  speed: 1,
   side: "both",
   intensity: 1,
   priceWindow: 100,
@@ -47,10 +57,13 @@ const palette = {
 
 function formatPrice(value) {
   if (!Number.isFinite(value)) return "—";
-  const decimals = state.data?.config.price_bin_size < 1 ? 2 : 0;
+  const binSize = state.data?.config.price_bin_size ?? 1;
+  const binDecimals = binSize < 1
+    ? Math.min(8, Math.max(0, Math.ceil(-Math.log10(binSize))))
+    : 0;
   return value.toLocaleString("en-US", {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: Math.max(decimals, 2),
+    minimumFractionDigits: binDecimals,
+    maximumFractionDigits: Math.max(binDecimals, 2),
   });
 }
 
@@ -78,68 +91,132 @@ function formatTime(timestamp) {
   }).format(new Date(timestamp));
 }
 
-function validateDocument(document) {
-  if (document?.schema_version !== 1) {
-    throw new Error("Unsupported heatmap schema");
-  }
-  if (!Array.isArray(document.columns) || document.columns.length === 0) {
-    throw new Error("Heatmap contains no replay columns");
-  }
-
-  const count = document.config?.price_bin_count;
-  if (!Number.isInteger(count) || count <= 0) {
-    throw new Error("Heatmap price-bin configuration is invalid");
-  }
-
-  for (const column of document.columns) {
-    if (
-      !Array.isArray(column.bids)
-      || !Array.isArray(column.asks)
-      || column.bids.length !== count
-      || column.asks.length !== count
-    ) {
-      throw new Error("Heatmap column dimensions do not match configuration");
-    }
-  }
-
-  return document;
+function setConnectionStatus(kind, label) {
+  connection.className = `connection ${kind}`;
+  connection.querySelector("span:last-child").textContent = label;
 }
 
-function summarize(document) {
-  const columns = document.columns;
-  const first = columns[0];
-  const last = columns.at(-1);
-  let peak = 0;
-
-  for (const column of columns) {
-    for (let index = 0; index < column.bids.length; index += 1) {
-      peak = Math.max(peak, column.bids[index], column.asks[index]);
-    }
+function validateHello(payload) {
+  if (payload?.type !== "hello" || payload.schema_version !== 1) {
+    throw new Error("Unsupported replay stream metadata");
   }
+  if (!Number.isInteger(payload.total_columns) || payload.total_columns <= 0) {
+    throw new Error("Replay stream contains no columns");
+  }
+  if (
+    !Number.isInteger(payload.config?.price_bin_count)
+    || payload.config.price_bin_count <= 0
+    || !Number.isFinite(payload.config.price_bin_size)
+    || payload.config.price_bin_size <= 0
+  ) {
+    throw new Error("Replay stream price-bin configuration is invalid");
+  }
+  return payload;
+}
 
-  document.summary = {
-    peak,
-    start: first.timestamp_ms,
-    end: last.timestamp_ms,
-    duration: last.timestamp_ms - first.timestamp_ms,
+function validateColumn(column) {
+  const count = state.data.config.price_bin_count;
+  if (
+    !column
+    || !Number.isFinite(column.timestamp_ms)
+    || !Number.isFinite(column.first_price)
+    || !Number.isFinite(column.mid_price)
+    || !Array.isArray(column.bids)
+    || !Array.isArray(column.asks)
+    || column.bids.length !== count
+    || column.asks.length !== count
+  ) {
+    throw new Error("Replay stream sent an invalid heatmap column");
+  }
+  return column;
+}
+
+function initializeReplay(metadata) {
+  const hello = validateHello(metadata);
+  state.data = {
+    product_id: hello.product_id,
+    config: hello.config,
+    columns: [],
+    summary: {
+      peak: hello.peak_depth,
+      start: hello.start_timestamp_ms,
+      end: hello.end_timestamp_ms,
+      duration: hello.end_timestamp_ms - hello.start_timestamp_ms,
+      total: hello.total_columns,
+    },
   };
+  state.position = 0;
+  state.playbackStatus = "paused";
+  updateSummary();
+  updatePlaybackUi();
+  queueRender();
 }
 
 function updateSummary() {
-  const { data } = state;
-  const latest = data.columns.at(-1);
+  if (!state.data) return;
+  const latest = state.data.columns.at(-1);
+  const { summary } = state.data;
 
-  document.querySelector("#product-id").textContent = data.product_id || "UNKNOWN";
-  document.querySelector("#last-mid").textContent = formatPrice(latest.mid_price);
-  document.querySelector("#window-duration").textContent = formatDuration(data.summary.duration);
-  document.querySelector("#column-count").textContent = data.columns.length.toLocaleString();
-  document.querySelector("#price-bin").textContent = `$${formatPrice(data.config.price_bin_size)}`;
-  document.querySelector("#peak-depth").textContent = formatQuantity(data.summary.peak);
-  document.querySelector("#replay-range").textContent = `${formatTime(data.summary.start)} — ${formatTime(data.summary.end)} UTC`;
+  document.querySelector("#product-id").textContent = state.data.product_id || "UNKNOWN";
+  document.querySelector("#last-mid").textContent = latest
+    ? formatPrice(latest.mid_price)
+    : "—";
+  document.querySelector("#window-duration").textContent = formatDuration(summary.duration);
+  document.querySelector("#column-count").textContent = `${state.data.columns.length.toLocaleString()} / ${summary.total.toLocaleString()}`;
+  document.querySelector("#price-bin").textContent = `$${formatPrice(state.data.config.price_bin_size)}`;
+  document.querySelector("#peak-depth").textContent = formatQuantity(summary.peak);
+  document.querySelector("#replay-range").textContent = `${formatTime(summary.start)} — ${formatTime(summary.end)} UTC`;
+}
 
-  connection.className = "connection ready";
-  connection.querySelector("span:last-child").textContent = "Replay loaded";
-  message.hidden = true;
+function updatePlaybackUi() {
+  const ready = Boolean(
+    state.data
+    && state.socket
+    && state.socket.readyState === WebSocket.OPEN
+  );
+  const total = state.data?.summary.total ?? 0;
+  const latest = state.data?.columns.at(-1);
+
+  controls.play.disabled = !ready;
+  controls.restartPlayback.disabled = !ready;
+  controls.speed.disabled = !ready;
+  controls.progress.max = Math.max(1, total);
+  controls.progress.value = state.position;
+  controls.playbackProgress.textContent = `${state.position.toLocaleString()} / ${total.toLocaleString()}`;
+  controls.playbackTime.textContent = latest
+    ? `${formatTime(latest.timestamp_ms)} UTC`
+    : state.data
+      ? `${formatTime(state.data.summary.start)} UTC`
+      : "—";
+
+  if (state.playbackStatus === "playing") {
+    controls.play.textContent = "Pause";
+    controls.play.setAttribute("aria-label", "Pause replay");
+    setConnectionStatus("ready", `${state.speed}× replay`);
+  } else if (state.playbackStatus === "complete") {
+    controls.play.textContent = "Replay";
+    controls.play.setAttribute("aria-label", "Replay from the beginning");
+    setConnectionStatus("ready", "Replay complete");
+  } else if (state.playbackStatus === "paused" && ready) {
+    controls.play.textContent = "Play";
+    controls.play.setAttribute("aria-label", "Play replay");
+    setConnectionStatus("ready", "Replay paused");
+  }
+
+  controls.speed.querySelectorAll("button[data-speed]").forEach((button) => {
+    const active = Number(button.dataset.speed) === state.speed;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+
+  if (!state.data || state.data.columns.length === 0) {
+    message.hidden = false;
+    message.textContent = state.playbackStatus === "playing"
+      ? "Streaming first heatmap column…"
+      : "Press Play to stream replay";
+  } else {
+    message.hidden = true;
+  }
 }
 
 function computeGeometry(width, height) {
@@ -217,14 +294,18 @@ function drawGrid(geometry) {
 function depthAlpha(quantity) {
   if (quantity <= 0) return 0;
   const peak = Math.max(state.data.summary.peak, Number.EPSILON);
-  const scaled = Math.log1p(quantity * state.intensity) / Math.log1p(peak * state.intensity);
+  const scaled = Math.log1p(quantity * state.intensity)
+    / Math.log1p(peak * state.intensity);
   return Math.min(1, 0.08 + scaled * 0.92);
 }
 
 function drawDepth(geometry) {
   const { columns } = state.data;
   const binSize = state.data.config.price_bin_size;
-  const cellHeight = Math.max(1, (binSize / geometry.priceSpan) * geometry.plot.height + 0.35);
+  const cellHeight = Math.max(
+    1,
+    (binSize / geometry.priceSpan) * geometry.plot.height + 0.35,
+  );
   const cellWidth = Math.max(1, geometry.cellWidth + 0.45);
 
   for (let columnIndex = 0; columnIndex < columns.length; columnIndex += 1) {
@@ -322,7 +403,7 @@ function drawHover(geometry) {
 
 function render() {
   state.renderQueued = false;
-  if (!state.data || !context) return;
+  if (!context) return;
 
   const bounds = frame.getBoundingClientRect();
   const ratio = Math.min(window.devicePixelRatio || 1, 2);
@@ -337,12 +418,25 @@ function render() {
   }
 
   context.setTransform(ratio, 0, 0, ratio, 0, 0);
+  context.fillStyle = palette.background;
+  context.fillRect(0, 0, width, height);
+
+  if (!state.data || state.data.columns.length === 0) {
+    state.geometry = null;
+    return;
+  }
+
   const geometry = computeGeometry(width, height);
   state.geometry = geometry;
   drawGrid(geometry);
   context.save();
   context.beginPath();
-  context.rect(geometry.plot.x, geometry.plot.y, geometry.plot.width, geometry.plot.height);
+  context.rect(
+    geometry.plot.x,
+    geometry.plot.y,
+    geometry.plot.width,
+    geometry.plot.height,
+  );
   context.clip();
   drawDepth(geometry);
   drawMidline(geometry);
@@ -426,7 +520,122 @@ function updateReading(event) {
   queueRender();
 }
 
+function sendControl(action, fields = {}) {
+  if (!state.socket || state.socket.readyState !== WebSocket.OPEN) return;
+  state.socket.send(JSON.stringify({ action, ...fields }));
+}
+
+function resetStreamColumns() {
+  if (!state.data) return;
+  state.data.columns = [];
+  state.position = 0;
+  clearReading();
+  updateSummary();
+  updatePlaybackUi();
+}
+
+function handleColumn(payload) {
+  if (!state.data || payload.index !== state.data.columns.length) {
+    throw new Error("Replay stream column sequence is invalid");
+  }
+
+  state.data.columns.push(validateColumn(payload.column));
+  state.position = payload.index + 1;
+  updateSummary();
+  updatePlaybackUi();
+  queueRender();
+}
+
+function handlePlaybackState(payload) {
+  if (!state.data) return;
+  if (!Number.isInteger(payload.position) || !Number.isInteger(payload.speed)) {
+    throw new Error("Replay stream sent invalid playback state");
+  }
+
+  if (payload.position < state.data.columns.length) {
+    state.data.columns.splice(payload.position);
+    clearReading();
+  }
+
+  state.position = payload.position;
+  state.speed = payload.speed;
+  state.playbackStatus = payload.status;
+  updateSummary();
+  updatePlaybackUi();
+  queueRender();
+}
+
+function handleStreamMessage(event) {
+  const payload = JSON.parse(event.data);
+
+  if (payload.type === "hello") {
+    initializeReplay(payload);
+  } else if (payload.type === "column") {
+    handleColumn(payload);
+  } else if (payload.type === "state") {
+    handlePlaybackState(payload);
+  } else if (payload.type === "reset") {
+    resetStreamColumns();
+  } else if (payload.type === "error") {
+    setConnectionStatus("error", payload.message || "Replay control failed");
+  }
+}
+
+function connectReplay() {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const socket = new WebSocket(`${protocol}//${window.location.host}/ws/replay`);
+  state.socket = socket;
+
+  socket.addEventListener("open", () => {
+    setConnectionStatus("", "Loading replay");
+  });
+
+  socket.addEventListener("message", (event) => {
+    try {
+      handleStreamMessage(event);
+    } catch (error) {
+      setConnectionStatus("error", "Invalid replay stream");
+      message.hidden = false;
+      message.textContent = error instanceof Error
+        ? error.message
+        : "Unable to process replay stream";
+      socket.close(1002, "Invalid replay stream");
+    }
+  });
+
+  socket.addEventListener("close", () => {
+    state.playbackStatus = "disconnected";
+    controls.play.disabled = true;
+    controls.restartPlayback.disabled = true;
+    controls.speed.disabled = true;
+    setConnectionStatus("error", "Stream disconnected");
+
+    if (!state.data || state.data.columns.length === 0) {
+      message.hidden = false;
+      message.textContent = "Replay stream disconnected";
+    }
+  });
+
+  socket.addEventListener("error", () => {
+    setConnectionStatus("error", "Stream unavailable");
+  });
+}
+
 function bindControls() {
+  controls.play.addEventListener("click", () => {
+    sendControl(state.playbackStatus === "playing" ? "pause" : "play");
+  });
+
+  controls.restartPlayback.addEventListener("click", () => {
+    sendControl("restart");
+  });
+
+  controls.speed.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-speed]");
+    if (!button) return;
+    sendControl("set_speed", { speed: Number(button.dataset.speed) });
+  });
+
   controls.intensity.addEventListener("input", () => {
     state.intensity = Number(controls.intensity.value);
     controls.intensityValue.value = `${state.intensity.toFixed(2).replace(/0$/, "")}×`;
@@ -456,7 +665,7 @@ function bindControls() {
     queueRender();
   });
 
-  controls.reset.addEventListener("click", () => {
+  controls.resetView.addEventListener("click", () => {
     state.side = "both";
     state.intensity = 1;
     state.priceWindow = 100;
@@ -474,26 +683,18 @@ function bindControls() {
     clearReading();
   });
 
+  canvas.addEventListener("keydown", (event) => {
+    if (event.code === "Space" && !controls.play.disabled) {
+      event.preventDefault();
+      controls.play.click();
+    }
+  });
   canvas.addEventListener("pointermove", updateReading);
   canvas.addEventListener("pointerleave", clearReading);
   canvas.addEventListener("blur", clearReading);
   new ResizeObserver(queueRender).observe(frame);
 }
 
-async function loadHeatmap() {
-  try {
-    const response = await fetch("/api/heatmap", { cache: "no-store" });
-    if (!response.ok) throw new Error(`Heatmap request failed (${response.status})`);
-    state.data = validateDocument(await response.json());
-    summarize(state.data);
-    updateSummary();
-    bindControls();
-    queueRender();
-  } catch (error) {
-    connection.className = "connection error";
-    connection.querySelector("span:last-child").textContent = "Replay unavailable";
-    message.textContent = error instanceof Error ? error.message : "Unable to load heatmap";
-  }
-}
-
-loadHeatmap();
+bindControls();
+queueRender();
+connectReplay();

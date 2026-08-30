@@ -225,6 +225,105 @@ h2 { font-size: 18px; }
   background-size: 100% 20%, 12.5% 100%, auto;
 }
 
+.playback-bar {
+  min-height: 66px;
+  padding: 11px 22px;
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: auto auto minmax(180px, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  background: rgba(7, 11, 17, 0.72);
+}
+
+.transport-button {
+  min-width: 70px;
+  min-height: 34px;
+  padding: 0 13px;
+  border: 1px solid #344052;
+  background: #121924;
+  cursor: pointer;
+  font: 650 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.transport-button.primary {
+  border-color: rgba(185, 245, 102, 0.5);
+  color: var(--lime);
+  background: rgba(185, 245, 102, 0.08);
+}
+
+.transport-button:hover:not(:disabled),
+.transport-button:focus-visible {
+  border-color: var(--bid);
+  outline: none;
+}
+
+.transport-button:disabled,
+.speed-control:disabled button {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.timeline {
+  min-width: 0;
+  padding: 0 8px;
+}
+
+.timeline progress {
+  display: block;
+  width: 100%;
+  height: 4px;
+  appearance: none;
+  border: 0;
+  background: #222d3a;
+}
+
+.timeline progress::-webkit-progress-bar {
+  background: #222d3a;
+}
+
+.timeline progress::-webkit-progress-value {
+  background: linear-gradient(90deg, var(--bid), var(--lime));
+  box-shadow: 0 0 10px rgba(39, 183, 255, 0.38);
+}
+
+.timeline progress::-moz-progress-bar {
+  background: linear-gradient(90deg, var(--bid), var(--lime));
+}
+
+.timeline-labels {
+  margin-top: 8px;
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font: 600 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.speed-control {
+  min-width: 144px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+
+.speed-control legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+.segmented.compact {
+  margin: 0;
+}
+
+.segmented.compact button {
+  min-height: 32px;
+}
+
 #heatmap {
   display: block;
   width: 100%;
@@ -529,6 +628,21 @@ input[type="range"]::-webkit-slider-thumb {
   }
 
   .chart-frame { min-height: 360px; }
+
+  .playback-bar {
+    grid-template-columns: auto auto 1fr;
+    padding: 12px 14px;
+  }
+
+  .timeline {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    padding: 8px 0 0;
+  }
+
+  .speed-control {
+    justify-self: end;
+  }
 
   .chart-footer {
     align-items: flex-start;

@@ -1,21 +1,32 @@
+#include "replay_stream.hpp"
+
 #include <boost/asio.hpp>
 #include <boost/beast.hpp>
 #include <boost/beast/http.hpp>
+#include <boost/beast/websocket.hpp>
+#include <boost/json.hpp>
 
+#include <algorithm>
 #include <charconv>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
+#include <utility>
 
 namespace asio = boost::asio;
 namespace beast = boost::beast;
 namespace http = beast::http;
+namespace websocket = beast::websocket;
+namespace json = boost::json;
 
 using tcp = asio::ip::tcp;
 
@@ -37,7 +48,12 @@ struct ViewerAssets
     std::string index;
     std::string styles;
     std::string script;
-    std::string heatmap;
+};
+
+struct ServerState
+{
+    ViewerAssets assets;
+    ReplayStreamData replay;
 };
 
 struct Route
@@ -138,38 +154,40 @@ std::string read_file(const std::filesystem::path& path)
     return content.str();
 }
 
-ViewerAssets load_assets(const ViewerOptions& options)
+std::shared_ptr<const ServerState> load_state(const ViewerOptions& options)
 {
-    return {
+    auto state = std::make_shared<ServerState>();
+    state->assets = {
         read_file(options.web_root / "index.html"),
         read_file(options.web_root / "styles.css"),
-        read_file(options.web_root / "app.js"),
-        read_file(options.heatmap_path)
+        read_file(options.web_root / "app.js")
     };
+    state->replay = parse_replay_stream(read_file(options.heatmap_path));
+    return state;
 }
 
 std::optional<Route> route_request(
     beast::string_view target,
-    const ViewerAssets& assets)
+    const ServerState& state)
 {
     if (target == "/" || target == "/index.html")
     {
-        return Route{&assets.index, "text/html; charset=utf-8"};
+        return Route{&state.assets.index, "text/html; charset=utf-8"};
     }
 
     if (target == "/styles.css")
     {
-        return Route{&assets.styles, "text/css; charset=utf-8"};
+        return Route{&state.assets.styles, "text/css; charset=utf-8"};
     }
 
     if (target == "/app.js")
     {
-        return Route{&assets.script, "text/javascript; charset=utf-8"};
+        return Route{&state.assets.script, "text/javascript; charset=utf-8"};
     }
 
-    if (target == "/api/heatmap")
+    if (target == "/api/metadata")
     {
-        return Route{&assets.heatmap, "application/json"};
+        return Route{&state.replay.hello_message_json, "application/json"};
     }
 
     return std::nullopt;
@@ -178,7 +196,7 @@ std::optional<Route> route_request(
 template <typename Body, typename Allocator>
 http::response<http::string_body> make_response(
     const http::request<Body, http::basic_fields<Allocator>>& request,
-    const ViewerAssets& assets)
+    const ServerState& state)
 {
     http::response<http::string_body> response;
     response.version(request.version());
@@ -192,7 +210,10 @@ http::response<http::string_body> make_response(
         "connect-src 'self'; img-src 'self' data:"
     );
 
-    if (request.method() != http::verb::get && request.method() != http::verb::head)
+    if (
+        request.method() != http::verb::get
+        && request.method() != http::verb::head
+    )
     {
         response.result(http::status::method_not_allowed);
         response.set(http::field::allow, "GET, HEAD");
@@ -206,13 +227,13 @@ http::response<http::string_body> make_response(
     {
         response.result(http::status::ok);
         response.set(http::field::content_type, "application/json");
-        response.body() = R"({"status":"ok"})";
+        response.body() = R"({"status":"ok","stream":"/ws/replay"})";
     }
     else
     {
         const std::optional<Route> route = route_request(
             request.target(),
-            assets
+            state
         );
 
         if (!route)
@@ -247,7 +268,219 @@ http::response<http::string_body> make_response(
     return response;
 }
 
-void serve(const ViewerOptions& options, const ViewerAssets& assets)
+std::string error_message(std::string_view message)
+{
+    json::object payload;
+    payload["type"] = "error";
+    payload["message"] = message;
+    return json::serialize(payload);
+}
+
+bool write_websocket_message(
+    websocket::stream<tcp::socket>& stream,
+    std::string_view message)
+{
+    beast::error_code error;
+    stream.text(true);
+    stream.write(asio::buffer(message), error);
+    return !error;
+}
+
+void run_replay_websocket(
+    tcp::socket socket,
+    http::request<http::string_body> request,
+    const ReplayStreamData& replay)
+{
+    websocket::stream<tcp::socket> stream{std::move(socket)};
+    stream.set_option(websocket::stream_base::decorator(
+        [](websocket::response_type& response)
+        {
+            response.set(http::field::server, "orderbook-replay-stream");
+        }
+    ));
+    stream.read_message_max(4 * 1024);
+    stream.accept(request);
+
+    ReplayPlayback playback(replay);
+
+    if (
+        !write_websocket_message(stream, replay.hello_message_json)
+        || !write_websocket_message(stream, playback.state_message())
+    )
+    {
+        return;
+    }
+
+    beast::flat_buffer buffer;
+    auto next_column_at = std::chrono::steady_clock::now();
+
+    while (true)
+    {
+        beast::error_code error;
+        const std::size_t available = stream.next_layer().available(error);
+
+        if (error)
+        {
+            return;
+        }
+
+        if (available > 0)
+        {
+            stream.read(buffer, error);
+
+            if (error == websocket::error::closed)
+            {
+                return;
+            }
+
+            if (error)
+            {
+                return;
+            }
+
+            if (!stream.got_text())
+            {
+                if (!write_websocket_message(
+                        stream,
+                        error_message("Replay controls must be JSON text")
+                    ))
+                {
+                    return;
+                }
+            }
+            else
+            {
+                const std::string command = beast::buffers_to_string(
+                    buffer.data()
+                );
+
+                try
+                {
+                    const ReplayControlResult result =
+                        playback.apply_control(command);
+
+                    if (
+                        result == ReplayControlResult::Restarted
+                        && !write_websocket_message(
+                            stream,
+                            R"({"type":"reset"})"
+                        )
+                    )
+                    {
+                        return;
+                    }
+
+                    if (!write_websocket_message(stream, playback.state_message()))
+                    {
+                        return;
+                    }
+
+                    next_column_at = std::chrono::steady_clock::now();
+                }
+                catch (const std::exception& control_error)
+                {
+                    if (!write_websocket_message(
+                            stream,
+                            error_message(control_error.what())
+                        ))
+                    {
+                        return;
+                    }
+                }
+            }
+
+            buffer.consume(buffer.size());
+        }
+
+        const auto now = std::chrono::steady_clock::now();
+
+        if (
+            playback.status() == ReplayStatus::Playing
+            && now >= next_column_at
+        )
+        {
+            const std::optional<std::string> column =
+                playback.take_next_column_message();
+
+            if (column && !write_websocket_message(stream, *column))
+            {
+                return;
+            }
+
+            if (playback.status() == ReplayStatus::Complete)
+            {
+                if (!write_websocket_message(stream, playback.state_message()))
+                {
+                    return;
+                }
+            }
+            else
+            {
+                next_column_at = std::chrono::steady_clock::now()
+                    + playback.interval_to_next();
+            }
+        }
+
+        const auto maximum_sleep = std::chrono::milliseconds{3};
+        auto sleep_duration = maximum_sleep;
+
+        if (playback.status() == ReplayStatus::Playing)
+        {
+            sleep_duration = std::min(
+                maximum_sleep,
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::max(
+                        next_column_at - std::chrono::steady_clock::now(),
+                        std::chrono::steady_clock::duration::zero()
+                    )
+                )
+            );
+        }
+
+        if (sleep_duration.count() > 0)
+        {
+            std::this_thread::sleep_for(sleep_duration);
+        }
+    }
+}
+
+void handle_connection(
+    tcp::socket socket,
+    std::shared_ptr<const ServerState> state)
+{
+    try
+    {
+        beast::flat_buffer buffer;
+        http::request<http::string_body> request;
+        http::read(socket, buffer, request);
+
+        if (
+            websocket::is_upgrade(request)
+            && request.target() == "/ws/replay"
+        )
+        {
+            run_replay_websocket(
+                std::move(socket),
+                std::move(request),
+                state->replay
+            );
+            return;
+        }
+
+        auto response = make_response(request, *state);
+        http::write(socket, response);
+        beast::error_code ignored;
+        socket.shutdown(tcp::socket::shutdown_send, ignored);
+    }
+    catch (const std::exception& error)
+    {
+        std::cerr << "Request failed: " << error.what() << '\n';
+    }
+}
+
+void serve(
+    const ViewerOptions& options,
+    std::shared_ptr<const ServerState> state)
 {
     asio::io_context context{1};
     const tcp::endpoint endpoint{
@@ -265,21 +498,11 @@ void serve(const ViewerOptions& options, const ViewerAssets& assets)
     {
         tcp::socket socket{context};
         acceptor.accept(socket);
-
-        try
-        {
-            beast::flat_buffer buffer;
-            http::request<http::string_body> request;
-            http::read(socket, buffer, request);
-            auto response = make_response(request, assets);
-            http::write(socket, response);
-            beast::error_code ignored;
-            socket.shutdown(tcp::socket::shutdown_send, ignored);
-        }
-        catch (const std::exception& error)
-        {
-            std::cerr << "Request failed: " << error.what() << '\n';
-        }
+        std::thread(
+            handle_connection,
+            std::move(socket),
+            state
+        ).detach();
     }
 }
 }
@@ -295,8 +518,8 @@ int main(int argc, char* argv[])
             return 0;
         }
 
-        const ViewerAssets assets = load_assets(*options);
-        serve(*options, assets);
+        const std::shared_ptr<const ServerState> state = load_state(*options);
+        serve(*options, state);
     }
     catch (const std::exception& error)
     {
