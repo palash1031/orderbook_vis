@@ -55,12 +55,25 @@ const palette = {
   crosshair: "rgba(238, 244, 248, 0.34)",
 };
 
+function decimalPlacesForIncrement(value, maximum = 8) {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+
+  for (let decimals = 0; decimals <= maximum; decimals += 1) {
+    const scaled = value * (10 ** decimals);
+    const tolerance = Number.EPSILON * Math.max(1, Math.abs(scaled)) * 16;
+
+    if (Math.abs(scaled - Math.round(scaled)) <= tolerance) {
+      return decimals;
+    }
+  }
+
+  return maximum;
+}
+
 function formatPrice(value) {
   if (!Number.isFinite(value)) return "—";
   const binSize = state.data?.config.price_bin_size ?? 1;
-  const binDecimals = binSize < 1
-    ? Math.min(8, Math.max(0, Math.ceil(-Math.log10(binSize))))
-    : 0;
+  const binDecimals = decimalPlacesForIncrement(binSize);
   return value.toLocaleString("en-US", {
     minimumFractionDigits: binDecimals,
     maximumFractionDigits: Math.max(binDecimals, 2),
