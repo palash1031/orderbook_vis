@@ -68,10 +68,10 @@ TEST(CoinbaseParserTest, ParsesSnapshot)
     EXPECT_EQ(parsed->type, BookEventType::Snapshot);
     EXPECT_EQ(parsed->sequence_num, 0U);
     ASSERT_EQ(parsed->updates.size(), 2U);
-    EXPECT_EQ(parsed->updates[0].side, "bid");
+    EXPECT_EQ(parsed->updates[0].side, BookSide::Bid);
     EXPECT_DOUBLE_EQ(parsed->updates[0].price, 80000.01);
     EXPECT_DOUBLE_EQ(parsed->updates[0].quantity, 1.5);
-    EXPECT_EQ(parsed->updates[1].side, "offer");
+    EXPECT_EQ(parsed->updates[1].side, BookSide::Offer);
     EXPECT_DOUBLE_EQ(parsed->updates[1].price, 80000.02);
     EXPECT_DOUBLE_EQ(parsed->updates[1].quantity, 2.0);
 }
@@ -89,7 +89,7 @@ TEST(CoinbaseParserTest, ParsesUpdate)
     EXPECT_EQ(parsed->type, BookEventType::Update);
     EXPECT_EQ(parsed->sequence_num, 42U);
     ASSERT_EQ(parsed->updates.size(), 1U);
-    EXPECT_EQ(parsed->updates[0].side, "bid");
+    EXPECT_EQ(parsed->updates[0].side, BookSide::Bid);
     EXPECT_DOUBLE_EQ(parsed->updates[0].price, 99.5);
     EXPECT_DOUBLE_EQ(parsed->updates[0].quantity, 3.25);
 }
@@ -124,8 +124,8 @@ TEST(CoinbaseParserTest, ParsesMultipleEvents)
     ASSERT_TRUE(parsed.has_value());
     EXPECT_EQ(parsed->type, BookEventType::Update);
     ASSERT_EQ(parsed->updates.size(), 2U);
-    EXPECT_EQ(parsed->updates[0].side, "bid");
-    EXPECT_EQ(parsed->updates[1].side, "offer");
+    EXPECT_EQ(parsed->updates[0].side, BookSide::Bid);
+    EXPECT_EQ(parsed->updates[1].side, BookSide::Offer);
 }
 
 TEST(CoinbaseParserTest, ZeroQuantityParsesCorrectly)
@@ -262,6 +262,67 @@ TEST(CoinbaseParserTest, InvalidNumericQuantityThrows)
                 make_event(
                     "update",
                     make_update("bid", "100.0", "not-a-number")
+                )
+            )
+        ),
+        std::invalid_argument
+    );
+}
+
+TEST(CoinbaseParserTest, ParsesScientificNotation)
+{
+    const auto parsed = CoinbaseParser::parse(
+        make_level2_message(
+            make_event(
+                "update",
+                make_update("bid", "80000.01", "1e-8")
+            )
+        )
+    );
+
+    ASSERT_TRUE(parsed.has_value());
+    ASSERT_EQ(parsed->updates.size(), 1U);
+    EXPECT_DOUBLE_EQ(parsed->updates[0].quantity, 1e-8);
+}
+
+TEST(CoinbaseParserTest, PartiallyParsedNumericValueThrows)
+{
+    EXPECT_THROW(
+        CoinbaseParser::parse(
+            make_level2_message(
+                make_event(
+                    "update",
+                    make_update("bid", "80000x", "1.0")
+                )
+            )
+        ),
+        std::invalid_argument
+    );
+}
+
+TEST(CoinbaseParserTest, EmptyNumericValueThrows)
+{
+    EXPECT_THROW(
+        CoinbaseParser::parse(
+            make_level2_message(
+                make_event(
+                    "update",
+                    make_update("bid", "80000.01", "")
+                )
+            )
+        ),
+        std::invalid_argument
+    );
+}
+
+TEST(CoinbaseParserTest, UnsupportedSideThrows)
+{
+    EXPECT_THROW(
+        CoinbaseParser::parse(
+            make_level2_message(
+                make_event(
+                    "update",
+                    make_update("unknown", "80000.01", "1.0")
                 )
             )
         ),

@@ -6,7 +6,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <string>
 #include <utility>
 #include <vector>
 
@@ -19,18 +18,15 @@ void populate_baseline_book(OrderBook& book)
 {
     book.clear();
 
-    const std::string bid_side = "bid";
-    const std::string ask_side = "offer";
-
     for (std::size_t index = 0; index < baseline_level_count; ++index)
     {
         book.apply_update(
-            bid_side,
+            BookSide::Bid,
             10'000.0 + static_cast<double>(index),
             1.0
         );
         book.apply_update(
-            ask_side,
+            BookSide::Offer,
             20'000.0 + static_cast<double>(index),
             1.0
         );
@@ -45,22 +41,22 @@ std::vector<BookUpdate> make_mixed_updates()
     for (std::size_t index = 0; index < mixed_batch_size / 4; ++index)
     {
         updates.push_back({
-            "bid",
+            BookSide::Bid,
             15'000.0 + static_cast<double>(index),
             2.0
         });
         updates.push_back({
-            "offer",
+            BookSide::Offer,
             40'000.0 + static_cast<double>(index),
             2.0
         });
         updates.push_back({
-            "bid",
+            BookSide::Bid,
             10'000.0 + static_cast<double>(index),
             3.0
         });
         updates.push_back({
-            "offer",
+            BookSide::Offer,
             20'000.0 + static_cast<double>(index),
             0.0
         });
@@ -89,12 +85,12 @@ ReconstructionWorkload make_reconstruction_workload()
     for (std::size_t index = 0; index < baseline_level_count; ++index)
     {
         workload.snapshot.updates.push_back({
-            "bid",
+            BookSide::Bid,
             10'000.0 + static_cast<double>(index),
             1.0
         });
         workload.snapshot.updates.push_back({
-            "offer",
+            BookSide::Offer,
             20'000.0 + static_cast<double>(index),
             1.0
         });
@@ -126,7 +122,7 @@ ReconstructionWorkload make_reconstruction_workload()
             {
                 case 0:
                     message.updates.push_back({
-                        "bid",
+                        BookSide::Bid,
                         10'000.0 + static_cast<double>(index),
                         2.0
                     });
@@ -134,7 +130,7 @@ ReconstructionWorkload make_reconstruction_workload()
 
                 case 1:
                     message.updates.push_back({
-                        "offer",
+                        BookSide::Offer,
                         20'000.0 + static_cast<double>(index),
                         2.0
                     });
@@ -142,7 +138,7 @@ ReconstructionWorkload make_reconstruction_workload()
 
                 case 2:
                     message.updates.push_back({
-                        "bid",
+                        BookSide::Bid,
                         15'000.0 + static_cast<double>(index),
                         1.0
                     });
@@ -150,7 +146,7 @@ ReconstructionWorkload make_reconstruction_workload()
 
                 case 3:
                     message.updates.push_back({
-                        "offer",
+                        BookSide::Offer,
                         20'000.0 + static_cast<double>(index),
                         0.0
                     });
@@ -170,17 +166,16 @@ void insert_new_bid(benchmark::State& state)
     OrderBook book;
     populate_baseline_book(book);
 
-    const std::string bid_side = "bid";
     constexpr double inserted_price = 10'500.5;
 
     for (auto _ : state)
     {
-        book.apply_update(bid_side, inserted_price, 2.0);
+        book.apply_update(BookSide::Bid, inserted_price, 2.0);
         benchmark::ClobberMemory();
 
         state.PauseTiming();
         benchmark::DoNotOptimize(book.bid_levels());
-        book.apply_update(bid_side, inserted_price, 0.0);
+        book.apply_update(BookSide::Bid, inserted_price, 0.0);
         state.ResumeTiming();
     }
 
@@ -192,14 +187,13 @@ void update_existing_bid(benchmark::State& state)
     OrderBook book;
     populate_baseline_book(book);
 
-    const std::string bid_side = "bid";
     constexpr double existing_price = 10'500.0;
     double quantity = 1.0;
 
     for (auto _ : state)
     {
         quantity += 0.000001;
-        book.apply_update(bid_side, existing_price, quantity);
+        book.apply_update(BookSide::Bid, existing_price, quantity);
         benchmark::ClobberMemory();
     }
 
@@ -212,17 +206,16 @@ void erase_bid(benchmark::State& state)
     OrderBook book;
     populate_baseline_book(book);
 
-    const std::string bid_side = "bid";
     constexpr double erased_price = 10'500.0;
 
     for (auto _ : state)
     {
-        book.apply_update(bid_side, erased_price, 0.0);
+        book.apply_update(BookSide::Bid, erased_price, 0.0);
         benchmark::ClobberMemory();
 
         state.PauseTiming();
         benchmark::DoNotOptimize(book.bid_levels());
-        book.apply_update(bid_side, erased_price, 1.0);
+        book.apply_update(BookSide::Bid, erased_price, 1.0);
         state.ResumeTiming();
     }
 

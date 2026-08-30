@@ -9,23 +9,24 @@ void OrderBook::clear()
 }
 
 void OrderBook::apply_update(
-    const std::string& side,
+    BookSide side,
     Price price,
     Quantity quantity)
 {
     std::map<Price, Quantity>* levels = nullptr;
 
-    if (side == "bid")
+    switch (side)
     {
-        levels = &bids_;
-    }
-    else if (side == "offer")
-    {
-        levels = &asks_;
-    }
-    else
-    {
-        throw std::invalid_argument("Unknown order book side: " + side);
+        case BookSide::Bid:
+            levels = &bids_;
+            break;
+
+        case BookSide::Offer:
+            levels = &asks_;
+            break;
+
+        default:
+            throw std::invalid_argument("Unknown order book side");
     }
 
     if (quantity == 0.0)

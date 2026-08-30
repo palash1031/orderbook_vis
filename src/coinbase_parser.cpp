@@ -2,6 +2,8 @@
 
 #include <boost/json.hpp>
 
+#include <cerrno>
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -27,6 +29,26 @@ BookEventType parse_event_type(const json::object& event)
     throw std::invalid_argument(
         "Unsupported Coinbase Level 2 event type: "
         + std::string(type.c_str(), type.size())
+    );
+}
+
+BookSide parse_book_side(const json::object& update)
+{
+    const auto& side = update.at("side").as_string();
+
+    if (side == "bid")
+    {
+        return BookSide::Bid;
+    }
+
+    if (side == "offer")
+    {
+        return BookSide::Offer;
+    }
+
+    throw std::invalid_argument(
+        "Unsupported Coinbase Level 2 side: "
+        + std::string(side.c_str(), side.size())
     );
 }
 
@@ -57,18 +79,23 @@ double parse_decimal_string(
     const char* field_name)
 {
     const auto& json_string = update.at(field_name).as_string();
-    const std::string text(json_string.c_str(), json_string.size());
+    const char* const begin = json_string.c_str();
+    char* end = nullptr;
 
-    std::size_t processed_characters = 0;
-    const double value = std::stod(text, &processed_characters);
+    errno = 0;
+    const double value = std::strtod(begin, &end);
 
-    if (processed_characters != text.size())
+    if (
+        end == begin
+        || end != begin + json_string.size()
+        || errno == ERANGE
+    )
     {
         throw std::invalid_argument(
             std::string("Invalid Coinbase Level 2 ")
             + field_name
             + ": "
-            + text
+            + std::string(begin, json_string.size())
         );
     }
 
@@ -122,28 +149,24 @@ ParsedCoinbaseMessage CoinbaseParser::parse_message(
             message_type = event_type;
 
             const auto& updates = event.at("updates").as_array();
+            message.updates.reserve(
+                message.updates.size() + updates.size()
+            );
 
             for (const auto& update_value : updates)
             {
                 const auto& update_object = update_value.as_object();
-                const auto& side_value =
-                    update_object.at("side").as_string();
+                const BookSide side = parse_book_side(update_object);
+                const double price = parse_decimal_string(
+                    update_object,
+                    "price_level"
+                );
+                const double quantity = parse_decimal_string(
+                    update_object,
+                    "new_quantity"
+                );
 
-                BookUpdate update{
-                    std::string(side_value.c_str(), side_value.size()),
-                    parse_decimal_string(update_object, "price_level"),
-                    parse_decimal_string(update_object, "new_quantity")
-                };
-
-                if (update.side != "bid" && update.side != "offer")
-                {
-                    throw std::invalid_argument(
-                        "Unsupported Coinbase Level 2 side: "
-                        + update.side
-                    );
-                }
-
-                message.updates.push_back(std::move(update));
+                message.updates.emplace_back(side, price, quantity);
             }
         }
 

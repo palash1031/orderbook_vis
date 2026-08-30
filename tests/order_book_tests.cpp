@@ -21,7 +21,7 @@ TEST(OrderBookTest, EmptyBookHasNoBestAsk)
 TEST(OrderBookTest, InsertBid)
 {
     OrderBook book;
-    book.apply_update("bid", 100.25, 2.0);
+    book.apply_update(BookSide::Bid, 100.25, 2.0);
 
     ASSERT_TRUE(book.best_bid().has_value());
     EXPECT_EQ(book.bid_levels(), 1U);
@@ -31,7 +31,7 @@ TEST(OrderBookTest, InsertBid)
 TEST(OrderBookTest, InsertAsk)
 {
     OrderBook book;
-    book.apply_update("offer", 100.75, 3.0);
+    book.apply_update(BookSide::Offer, 100.75, 3.0);
 
     ASSERT_TRUE(book.best_ask().has_value());
     EXPECT_EQ(book.ask_levels(), 1U);
@@ -41,9 +41,9 @@ TEST(OrderBookTest, InsertAsk)
 TEST(OrderBookTest, HighestBidWins)
 {
     OrderBook book;
-    book.apply_update("bid", 99.0, 1.0);
-    book.apply_update("bid", 101.0, 1.0);
-    book.apply_update("bid", 100.0, 1.0);
+    book.apply_update(BookSide::Bid, 99.0, 1.0);
+    book.apply_update(BookSide::Bid, 101.0, 1.0);
+    book.apply_update(BookSide::Bid, 100.0, 1.0);
 
     ASSERT_TRUE(book.best_bid().has_value());
     EXPECT_DOUBLE_EQ(*book.best_bid(), 101.0);
@@ -52,9 +52,9 @@ TEST(OrderBookTest, HighestBidWins)
 TEST(OrderBookTest, LowestAskWins)
 {
     OrderBook book;
-    book.apply_update("offer", 102.0, 1.0);
-    book.apply_update("offer", 100.0, 1.0);
-    book.apply_update("offer", 101.0, 1.0);
+    book.apply_update(BookSide::Offer, 102.0, 1.0);
+    book.apply_update(BookSide::Offer, 100.0, 1.0);
+    book.apply_update(BookSide::Offer, 101.0, 1.0);
 
     ASSERT_TRUE(book.best_ask().has_value());
     EXPECT_DOUBLE_EQ(*book.best_ask(), 100.0);
@@ -63,8 +63,8 @@ TEST(OrderBookTest, LowestAskWins)
 TEST(OrderBookTest, UpdateExistingLevel)
 {
     OrderBook book;
-    book.apply_update("bid", 100.0, 1.0);
-    book.apply_update("bid", 100.0, 5.0);
+    book.apply_update(BookSide::Bid, 100.0, 1.0);
+    book.apply_update(BookSide::Bid, 100.0, 5.0);
 
     EXPECT_EQ(book.bid_levels(), 1U);
 }
@@ -72,8 +72,8 @@ TEST(OrderBookTest, UpdateExistingLevel)
 TEST(OrderBookTest, ZeroQuantityDeletesBid)
 {
     OrderBook book;
-    book.apply_update("bid", 100.0, 1.0);
-    book.apply_update("bid", 100.0, 0.0);
+    book.apply_update(BookSide::Bid, 100.0, 1.0);
+    book.apply_update(BookSide::Bid, 100.0, 0.0);
 
     EXPECT_EQ(book.bid_levels(), 0U);
     EXPECT_FALSE(book.best_bid().has_value());
@@ -82,8 +82,8 @@ TEST(OrderBookTest, ZeroQuantityDeletesBid)
 TEST(OrderBookTest, ZeroQuantityDeletesAsk)
 {
     OrderBook book;
-    book.apply_update("offer", 101.0, 1.0);
-    book.apply_update("offer", 101.0, 0.0);
+    book.apply_update(BookSide::Offer, 101.0, 1.0);
+    book.apply_update(BookSide::Offer, 101.0, 0.0);
 
     EXPECT_EQ(book.ask_levels(), 0U);
     EXPECT_FALSE(book.best_ask().has_value());
@@ -92,8 +92,8 @@ TEST(OrderBookTest, ZeroQuantityDeletesAsk)
 TEST(OrderBookTest, SpreadIsCorrect)
 {
     OrderBook book;
-    book.apply_update("bid", 100.25, 1.0);
-    book.apply_update("offer", 100.75, 1.0);
+    book.apply_update(BookSide::Bid, 100.25, 1.0);
+    book.apply_update(BookSide::Offer, 100.75, 1.0);
 
     ASSERT_TRUE(book.spread().has_value());
     EXPECT_DOUBLE_EQ(*book.spread(), 0.5);
@@ -102,10 +102,10 @@ TEST(OrderBookTest, SpreadIsCorrect)
 TEST(OrderBookTest, SpreadUnavailableWhenOneSideMissing)
 {
     OrderBook bid_only_book;
-    bid_only_book.apply_update("bid", 100.0, 1.0);
+    bid_only_book.apply_update(BookSide::Bid, 100.0, 1.0);
 
     OrderBook ask_only_book;
-    ask_only_book.apply_update("offer", 101.0, 1.0);
+    ask_only_book.apply_update(BookSide::Offer, 101.0, 1.0);
 
     EXPECT_FALSE(bid_only_book.spread().has_value());
     EXPECT_FALSE(ask_only_book.spread().has_value());
@@ -114,8 +114,8 @@ TEST(OrderBookTest, SpreadUnavailableWhenOneSideMissing)
 TEST(OrderBookTest, ClearRemovesBothSides)
 {
     OrderBook book;
-    book.apply_update("bid", 100.0, 1.0);
-    book.apply_update("offer", 101.0, 1.0);
+    book.apply_update(BookSide::Bid, 100.0, 1.0);
+    book.apply_update(BookSide::Offer, 101.0, 1.0);
 
     book.clear();
 
@@ -131,7 +131,7 @@ TEST(OrderBookTest, UnknownSideThrowsInvalidArgument)
     OrderBook book;
 
     EXPECT_THROW(
-        book.apply_update("unknown", 100.0, 1.0),
+        book.apply_update(static_cast<BookSide>(255), 100.0, 1.0),
         std::invalid_argument
     );
 }

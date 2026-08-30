@@ -157,7 +157,7 @@ TEST(BookReconstructorTest, AppliesSnapshotAndInOrderUpdates)
     const ParsedBookMessage snapshot_message = make_message(
         10,
         BookEventType::Snapshot,
-        {{"bid", 100.0, 1.0}, {"offer", 105.0, 1.0}}
+        {{BookSide::Bid, 100.0, 1.0}, {BookSide::Offer, 105.0, 1.0}}
     );
     const auto snapshot = reconstructor.process(
         snapshot_message,
@@ -166,7 +166,7 @@ TEST(BookReconstructorTest, AppliesSnapshotAndInOrderUpdates)
     const ParsedBookMessage first_update_message = make_message(
         11,
         BookEventType::Update,
-        {{"bid", 101.0, 2.0}}
+        {{BookSide::Bid, 101.0, 2.0}}
     );
     const auto first_update = reconstructor.process(
         first_update_message,
@@ -175,7 +175,7 @@ TEST(BookReconstructorTest, AppliesSnapshotAndInOrderUpdates)
     const ParsedBookMessage second_update_message = make_message(
         12,
         BookEventType::Update,
-        {{"offer", 104.0, 3.0}}
+        {{BookSide::Offer, 104.0, 3.0}}
     );
     const auto second_update = reconstructor.process(
         second_update_message,
@@ -200,7 +200,7 @@ TEST(BookReconstructorTest, GapStopsUpdatesUntilSnapshotRestoresSynchronization)
     const ParsedBookMessage snapshot_message = make_message(
         10,
         BookEventType::Snapshot,
-        {{"bid", 100.0, 1.0}, {"offer", 101.0, 1.0}}
+        {{BookSide::Bid, 100.0, 1.0}, {BookSide::Offer, 101.0, 1.0}}
     );
     reconstructor.process(
         snapshot_message,
@@ -210,7 +210,7 @@ TEST(BookReconstructorTest, GapStopsUpdatesUntilSnapshotRestoresSynchronization)
     const ParsedBookMessage gap_message = make_message(
         12,
         BookEventType::Update,
-        {{"bid", 200.0, 1.0}}
+        {{BookSide::Bid, 200.0, 1.0}}
     );
     const auto gap = reconstructor.process(
         gap_message,
@@ -219,7 +219,7 @@ TEST(BookReconstructorTest, GapStopsUpdatesUntilSnapshotRestoresSynchronization)
     const ParsedBookMessage late_missing_message = make_message(
         11,
         BookEventType::Update,
-        {{"bid", 150.0, 1.0}}
+        {{BookSide::Bid, 150.0, 1.0}}
     );
     const auto late_missing_update = reconstructor.process(
         late_missing_message,
@@ -236,7 +236,7 @@ TEST(BookReconstructorTest, GapStopsUpdatesUntilSnapshotRestoresSynchronization)
     const ParsedBookMessage recovery_message = make_message(
         20,
         BookEventType::Snapshot,
-        {{"bid", 300.0, 1.0}, {"offer", 301.0, 1.0}}
+        {{BookSide::Bid, 300.0, 1.0}, {BookSide::Offer, 301.0, 1.0}}
     );
     const SequenceResult recovery_sequence =
         tracker.observe(recovery_message.sequence_num);
@@ -269,7 +269,7 @@ TEST(BookReconstructorTest, GapSnapshotRepairsSynchronizationAndReanchors)
     const ParsedBookMessage initial_snapshot = make_message(
         100,
         BookEventType::Snapshot,
-        {{"bid", 100.0, 1.0}, {"offer", 101.0, 1.0}}
+        {{BookSide::Bid, 100.0, 1.0}, {BookSide::Offer, 101.0, 1.0}}
     );
     reconstructor.process(
         initial_snapshot,
@@ -279,7 +279,7 @@ TEST(BookReconstructorTest, GapSnapshotRepairsSynchronizationAndReanchors)
     const ParsedBookMessage update = make_message(
         101,
         BookEventType::Update,
-        {{"bid", 100.5, 1.0}}
+        {{BookSide::Bid, 100.5, 1.0}}
     );
     reconstructor.process(
         update,
@@ -289,7 +289,7 @@ TEST(BookReconstructorTest, GapSnapshotRepairsSynchronizationAndReanchors)
     const ParsedBookMessage recovery_snapshot = make_message(
         105,
         BookEventType::Snapshot,
-        {{"bid", 105.0, 1.0}, {"offer", 106.0, 1.0}}
+        {{BookSide::Bid, 105.0, 1.0}, {BookSide::Offer, 106.0, 1.0}}
     );
     const SequenceResult gap = tracker.observe(
         recovery_snapshot.sequence_num
@@ -321,7 +321,7 @@ TEST(BookReconstructorTest, DuplicateSnapshotDoesNotReplaceCurrentBook)
     const ParsedBookMessage initial_snapshot = make_message(
         100,
         BookEventType::Snapshot,
-        {{"bid", 100.0, 1.0}}
+        {{BookSide::Bid, 100.0, 1.0}}
     );
     reconstructor.process(
         initial_snapshot,
@@ -331,7 +331,7 @@ TEST(BookReconstructorTest, DuplicateSnapshotDoesNotReplaceCurrentBook)
     const ParsedBookMessage update = make_message(
         101,
         BookEventType::Update,
-        {{"bid", 101.0, 1.0}}
+        {{BookSide::Bid, 101.0, 1.0}}
     );
     reconstructor.process(
         update,
@@ -341,7 +341,7 @@ TEST(BookReconstructorTest, DuplicateSnapshotDoesNotReplaceCurrentBook)
     const ParsedBookMessage duplicate_snapshot = make_message(
         101,
         BookEventType::Snapshot,
-        {{"bid", 50.0, 1.0}}
+        {{BookSide::Bid, 50.0, 1.0}}
     );
     const ReconstructionResult duplicate = reconstructor.process(
         duplicate_snapshot,
@@ -363,7 +363,7 @@ TEST(BookReconstructorTest, StaleSnapshotDoesNotReplaceCurrentBook)
     const ParsedBookMessage initial_snapshot = make_message(
         100,
         BookEventType::Snapshot,
-        {{"bid", 100.0, 1.0}}
+        {{BookSide::Bid, 100.0, 1.0}}
     );
     reconstructor.process(
         initial_snapshot,
@@ -373,7 +373,7 @@ TEST(BookReconstructorTest, StaleSnapshotDoesNotReplaceCurrentBook)
     const ParsedBookMessage first_update = make_message(
         101,
         BookEventType::Update,
-        {{"bid", 101.0, 1.0}}
+        {{BookSide::Bid, 101.0, 1.0}}
     );
     reconstructor.process(
         first_update,
@@ -383,7 +383,7 @@ TEST(BookReconstructorTest, StaleSnapshotDoesNotReplaceCurrentBook)
     const ParsedBookMessage second_update = make_message(
         102,
         BookEventType::Update,
-        {{"bid", 102.0, 1.0}}
+        {{BookSide::Bid, 102.0, 1.0}}
     );
     reconstructor.process(
         second_update,
@@ -393,7 +393,7 @@ TEST(BookReconstructorTest, StaleSnapshotDoesNotReplaceCurrentBook)
     const ParsedBookMessage stale_snapshot = make_message(
         101,
         BookEventType::Snapshot,
-        {{"bid", 50.0, 1.0}}
+        {{BookSide::Bid, 50.0, 1.0}}
     );
     const ReconstructionResult stale = reconstructor.process(
         stale_snapshot,
@@ -415,7 +415,7 @@ TEST(BookReconstructorTest, DuplicateMessageDoesNotMutateBook)
     const ParsedBookMessage snapshot_message = make_message(
         10,
         BookEventType::Snapshot,
-        {{"bid", 100.0, 1.0}}
+        {{BookSide::Bid, 100.0, 1.0}}
     );
     reconstructor.process(
         snapshot_message,
@@ -424,7 +424,7 @@ TEST(BookReconstructorTest, DuplicateMessageDoesNotMutateBook)
     const ParsedBookMessage update_message = make_message(
         11,
         BookEventType::Update,
-        {{"bid", 101.0, 1.0}}
+        {{BookSide::Bid, 101.0, 1.0}}
     );
     reconstructor.process(
         update_message,
@@ -434,7 +434,7 @@ TEST(BookReconstructorTest, DuplicateMessageDoesNotMutateBook)
     const ParsedBookMessage duplicate_message = make_message(
         11,
         BookEventType::Update,
-        {{"bid", 200.0, 1.0}}
+        {{BookSide::Bid, 200.0, 1.0}}
     );
     const auto duplicate = reconstructor.process(
         duplicate_message,
@@ -455,7 +455,7 @@ TEST(BookReconstructorTest, StaleMessageDoesNotMutateBook)
     const ParsedBookMessage snapshot_message = make_message(
         10,
         BookEventType::Snapshot,
-        {{"bid", 100.0, 1.0}}
+        {{BookSide::Bid, 100.0, 1.0}}
     );
     reconstructor.process(
         snapshot_message,
@@ -465,7 +465,7 @@ TEST(BookReconstructorTest, StaleMessageDoesNotMutateBook)
     const ParsedBookMessage stale_message = make_message(
         9,
         BookEventType::Update,
-        {{"bid", 200.0, 1.0}}
+        {{BookSide::Bid, 200.0, 1.0}}
     );
     const auto stale = reconstructor.process(
         stale_message,
