@@ -3,9 +3,13 @@
 #include <boost/json.hpp>
 
 #include <cerrno>
+#include <chrono>
+#include <cmath>
 #include <cstdlib>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace json = boost::json;
@@ -52,6 +56,108 @@ BookSide parse_book_side(const json::object& update)
     );
 }
 
+int parse_timestamp_digits(
+    std::string_view timestamp,
+    std::size_t position,
+    std::size_t count)
+{
+    int value = 0;
+
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        const char character = timestamp[position + index];
+
+        if (character < '0' || character > '9')
+        {
+            throw std::invalid_argument("Invalid Coinbase timestamp");
+        }
+
+        value = value * 10 + (character - '0');
+    }
+
+    return value;
+}
+
+MarketTimestamp parse_timestamp(const json::value& value)
+{
+    const auto& json_string = value.as_string();
+    const std::string_view timestamp(
+        json_string.c_str(),
+        json_string.size()
+    );
+
+    const bool whole_seconds =
+        timestamp.size() == 20 && timestamp[19] == 'Z';
+    const bool fractional_seconds =
+        timestamp.size() >= 22
+        && timestamp.size() <= 30
+        && timestamp[19] == '.'
+        && timestamp.back() == 'Z';
+
+    if (
+        timestamp.size() < 20
+        || timestamp[4] != '-'
+        || timestamp[7] != '-'
+        || timestamp[10] != 'T'
+        || timestamp[13] != ':'
+        || timestamp[16] != ':'
+        || (!whole_seconds && !fractional_seconds)
+    )
+    {
+        throw std::invalid_argument("Invalid Coinbase timestamp");
+    }
+
+    const int year_value = parse_timestamp_digits(timestamp, 0, 4);
+    const unsigned month_value = static_cast<unsigned>(
+        parse_timestamp_digits(timestamp, 5, 2)
+    );
+    const unsigned day_value = static_cast<unsigned>(
+        parse_timestamp_digits(timestamp, 8, 2)
+    );
+    const int hour_value = parse_timestamp_digits(timestamp, 11, 2);
+    const int minute_value = parse_timestamp_digits(timestamp, 14, 2);
+    const int second_value = parse_timestamp_digits(timestamp, 17, 2);
+
+    const std::chrono::year_month_day date{
+        std::chrono::year{year_value},
+        std::chrono::month{month_value},
+        std::chrono::day{day_value}
+    };
+
+    if (
+        !date.ok()
+        || hour_value > 23
+        || minute_value > 59
+        || second_value > 59
+    )
+    {
+        throw std::invalid_argument("Invalid Coinbase timestamp");
+    }
+
+    std::int64_t fractional_nanoseconds = 0;
+
+    if (fractional_seconds)
+    {
+        const std::size_t digit_count = timestamp.size() - 21;
+        fractional_nanoseconds = parse_timestamp_digits(
+            timestamp,
+            20,
+            digit_count
+        );
+
+        for (std::size_t index = digit_count; index < 9; ++index)
+        {
+            fractional_nanoseconds *= 10;
+        }
+    }
+
+    return std::chrono::sys_days{date}
+        + std::chrono::hours{hour_value}
+        + std::chrono::minutes{minute_value}
+        + std::chrono::seconds{second_value}
+        + std::chrono::nanoseconds{fractional_nanoseconds};
+}
+
 std::uint64_t parse_sequence_num(const json::value& value)
 {
     if (value.is_uint64())
@@ -89,6 +195,7 @@ double parse_decimal_string(
         end == begin
         || end != begin + json_string.size()
         || errno == ERANGE
+        || !std::isfinite(value)
     )
     {
         throw std::invalid_argument(
@@ -122,6 +229,7 @@ ParsedCoinbaseMessage CoinbaseParser::parse_message(
 
         ParsedBookMessage message;
         message.sequence_num = sequence_num;
+        message.timestamp = parse_timestamp(object.at("timestamp"));
 
         const auto& events = object.at("events").as_array();
 
@@ -133,11 +241,18 @@ ParsedCoinbaseMessage CoinbaseParser::parse_message(
         }
 
         std::optional<BookEventType> message_type;
+        std::optional<std::string> product_id;
 
         for (const auto& event_value : events)
         {
             const auto& event = event_value.as_object();
             const BookEventType event_type = parse_event_type(event);
+            const auto& event_product_id =
+                event.at("product_id").as_string();
+            const std::string parsed_product_id(
+                event_product_id.c_str(),
+                event_product_id.size()
+            );
 
             if (message_type && *message_type != event_type)
             {
@@ -147,6 +262,15 @@ ParsedCoinbaseMessage CoinbaseParser::parse_message(
             }
 
             message_type = event_type;
+
+            if (product_id && *product_id != parsed_product_id)
+            {
+                throw std::invalid_argument(
+                    "Coinbase Level 2 message contains mixed product IDs"
+                );
+            }
+
+            product_id = parsed_product_id;
 
             const auto& updates = event.at("updates").as_array();
             message.updates.reserve(
@@ -171,6 +295,7 @@ ParsedCoinbaseMessage CoinbaseParser::parse_message(
         }
 
         message.type = *message_type;
+        message.product_id = std::move(*product_id);
         return {sequence_num, std::move(message)};
     }
     catch (const std::exception& error)

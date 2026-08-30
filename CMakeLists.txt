@@ -17,6 +17,7 @@ add_library(orderbook_core
     src/coinbase_parser.cpp
     src/sequence_tracker.cpp
     src/book_reconstructor.cpp
+    src/heatmap_history.cpp
 )
 
 target_include_directories(orderbook_core PUBLIC include)
@@ -59,6 +60,7 @@ if(BUILD_TESTING)
         tests/order_book_tests.cpp
         tests/coinbase_parser_tests.cpp
         tests/sequence_tracker_tests.cpp
+        tests/heatmap_history_tests.cpp
     )
 
     target_link_libraries(orderbook_tests PRIVATE

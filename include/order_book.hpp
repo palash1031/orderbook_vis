@@ -11,6 +11,7 @@ class OrderBook
 public:
     using Price = double;
     using Quantity = double;
+    using Levels = std::map<Price, Quantity>;
 
     void clear();
 
@@ -27,7 +28,10 @@ public:
     std::optional<Price> best_ask() const;
     std::optional<Price> spread() const;
 
+    const Levels& bids() const noexcept;
+    const Levels& asks() const noexcept;
+
 private:
-    std::map<Price, Quantity> bids_;
-    std::map<Price, Quantity> asks_;
+    Levels bids_;
+    Levels asks_;
 };
