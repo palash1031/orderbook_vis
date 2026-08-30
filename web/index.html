@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Local Coinbase Level 2 order book heatmap replay viewer">
+  <title>Depthfield — Order Book Replay</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Depthfield home">
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span>
+        <strong>DEPTHFIELD</strong>
+        <small>ORDER BOOK REPLAY</small>
+      </span>
+    </a>
+
+    <div class="instrument" aria-label="Loaded market">
+      <span class="eyebrow">MARKET</span>
+      <strong id="product-id">—</strong>
+      <span id="last-mid" class="price">—</span>
+    </div>
+
+    <div class="connection" id="connection-state" role="status">
+      <span class="status-light"></span>
+      <span>Loading replay</span>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <section class="chart-shell" aria-labelledby="chart-title">
+      <div class="chart-heading">
+        <div>
+          <span class="eyebrow">LIQUIDITY THROUGH TIME</span>
+          <h1 id="chart-title">Resting depth</h1>
+        </div>
+
+        <dl class="metrics" aria-label="Replay summary">
+          <div>
+            <dt>Window</dt>
+            <dd id="window-duration">—</dd>
+          </div>
+          <div>
+            <dt>Columns</dt>
+            <dd id="column-count">—</dd>
+          </div>
+          <div>
+            <dt>Price bin</dt>
+            <dd id="price-bin">—</dd>
+          </div>
+          <div>
+            <dt>Peak depth</dt>
+            <dd id="peak-depth">—</dd>
+          </div>
+        </dl>
+      </div>
+
+      <div class="chart-frame" id="chart-frame">
+        <canvas
+          id="heatmap"
+          tabindex="0"
+          aria-label="Order book liquidity heatmap. Move the pointer over the chart for time, price, bid, and ask depth."
+        >Your browser does not support canvas.</canvas>
+        <div class="chart-message" id="chart-message">Preparing depth map…</div>
+        <div class="tooltip" id="tooltip" hidden></div>
+      </div>
+
+      <div class="chart-footer">
+        <div class="legend" aria-label="Heatmap color legend">
+          <span><i class="bid-swatch"></i>Bid liquidity</span>
+          <span><i class="ask-swatch"></i>Ask liquidity</span>
+          <span><i class="mid-swatch"></i>Mid price</span>
+        </div>
+        <span id="replay-range" class="replay-range">—</span>
+      </div>
+    </section>
+
+    <aside class="control-panel" aria-label="Heatmap controls">
+      <div class="panel-heading">
+        <span class="eyebrow">DISPLAY</span>
+        <h2>Depth controls</h2>
+      </div>
+
+      <fieldset class="control-group">
+        <legend>Book side</legend>
+        <div class="segmented" id="side-control">
+          <button type="button" class="active" data-side="both" aria-pressed="true">Both</button>
+          <button type="button" data-side="bid" aria-pressed="false">Bids</button>
+          <button type="button" data-side="ask" aria-pressed="false">Asks</button>
+        </div>
+      </fieldset>
+
+      <label class="range-control" for="intensity">
+        <span><b>Intensity</b><output id="intensity-value">1.0×</output></span>
+        <input id="intensity" type="range" min="0.25" max="4" value="1" step="0.25">
+      </label>
+
+      <label class="range-control" for="price-window">
+        <span><b>Price window</b><output id="price-window-value">100%</output></span>
+        <input id="price-window" type="range" min="20" max="100" value="100" step="5">
+      </label>
+
+      <label class="toggle-control" for="midline">
+        <span>
+          <b>Mid-price trace</b>
+          <small>Follow the center of the spread</small>
+        </span>
+        <input id="midline" type="checkbox" checked>
+      </label>
+
+      <button class="reset-button" id="reset-view" type="button">Reset view</button>
+
+      <div class="reading" aria-live="polite">
+        <span class="eyebrow">CURSOR READING</span>
+        <dl>
+          <div><dt>Time</dt><dd id="cursor-time">—</dd></div>
+          <div><dt>Price</dt><dd id="cursor-price">—</dd></div>
+          <div><dt>Bid size</dt><dd id="cursor-bid">—</dd></div>
+          <div><dt>Ask size</dt><dd id="cursor-ask">—</dd></div>
+        </dl>
+      </div>
+    </aside>
+  </main>
+</body>
+</html>

@@ -3,3 +3,4 @@ build-release
 benchmark-results
 btc_usd.jsonl
 temp-copy
+heatmap.json

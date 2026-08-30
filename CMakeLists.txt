@@ -18,6 +18,7 @@ add_library(orderbook_core
     src/sequence_tracker.cpp
     src/book_reconstructor.cpp
     src/heatmap_history.cpp
+    src/heatmap_json.cpp
 )
 
 target_include_directories(orderbook_core PUBLIC include)
@@ -43,6 +44,18 @@ target_link_libraries(replay PRIVATE
     orderbook_core
 )
 
+add_executable(heatmap_viewer
+    src/heatmap_viewer.cpp
+)
+
+target_compile_definitions(heatmap_viewer PRIVATE
+    ORDERBOOK_WEB_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/web"
+)
+
+target_link_libraries(heatmap_viewer PRIVATE
+    orderbook_core
+)
+
 include(CTest)
 
 if(BUILD_TESTING)
@@ -61,6 +74,7 @@ if(BUILD_TESTING)
         tests/coinbase_parser_tests.cpp
         tests/sequence_tracker_tests.cpp
         tests/heatmap_history_tests.cpp
+        tests/heatmap_json_tests.cpp
     )
 
     target_link_libraries(orderbook_tests PRIVATE
