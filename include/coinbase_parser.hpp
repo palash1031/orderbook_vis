@@ -25,6 +25,8 @@ struct ParsedBookMessage
     std::uint64_t sequence_num;
     BookEventType type;
     std::vector<BookUpdate> updates;
+    MarketTimestamp timestamp{};
+    std::string product_id;
 };
 
 struct ParsedCoinbaseMessage

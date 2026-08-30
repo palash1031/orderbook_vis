@@ -1,5 +1,6 @@
 #include "book_reconstructor.hpp"
 #include "coinbase_parser.hpp"
+#include "heatmap_history.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -25,6 +26,7 @@ struct ReplayStats
     std::uint64_t sequence_gaps = 0;
     std::uint64_t duplicate_messages = 0;
     std::uint64_t stale_messages = 0;
+    std::uint64_t heatmap_samples = 0;
 };
 
 double per_second(std::uint64_t count, double elapsed_seconds)
@@ -58,6 +60,7 @@ int main(int argc, char* argv[])
 
     BookReconstructor reconstructor;
     SequenceTracker sequence_tracker;
+    HeatmapHistory heatmap;
 
     std::string line;
     ReplayStats stats;
@@ -85,6 +88,7 @@ int main(int argc, char* argv[])
                 case SequenceStatus::Gap:
                     ++stats.sequence_gaps;
                     reconstructor.mark_desynchronized();
+                    heatmap.mark_discontinuity();
                     std::cerr
                         << "message "
                         << stats.lines_read
@@ -171,6 +175,16 @@ int main(int argc, char* argv[])
             {
                 stats.book_updates_applied +=
                     parsed.book_message->updates.size();
+
+                if (
+                    heatmap.sample(
+                        parsed.book_message->timestamp,
+                        reconstructor.book()
+                    )
+                )
+                {
+                    ++stats.heatmap_samples;
+                }
             }
             else
             {
@@ -240,6 +254,11 @@ int main(int argc, char* argv[])
     std::cout
         << "Ignored L2 messages: "
         << stats.ignored_l2_messages
+        << '\n';
+    std::cout << "Heatmap samples: " << stats.heatmap_samples << '\n';
+    std::cout
+        << "Heatmap columns retained: "
+        << heatmap.columns().size()
         << '\n';
 
     std::cout << std::fixed << std::setprecision(6);

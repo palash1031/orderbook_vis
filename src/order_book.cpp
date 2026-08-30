@@ -81,3 +81,13 @@ std::optional<OrderBook::Price> OrderBook::spread() const
 
     return *ask - *bid;
 }
+
+const OrderBook::Levels& OrderBook::bids() const noexcept
+{
+    return bids_;
+}
+
+const OrderBook::Levels& OrderBook::asks() const noexcept
+{
+    return asks_;
+}

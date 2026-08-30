@@ -1,9 +1,11 @@
 #include "book_reconstructor.hpp"
+#include "heatmap_history.hpp"
 #include "order_book.hpp"
 #include "sequence_tracker.hpp"
 
 #include <benchmark/benchmark.h>
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <utility>
@@ -285,6 +287,38 @@ void reconstruct_batch(benchmark::State& state)
         * static_cast<std::int64_t>(items_per_iteration)
     );
 }
+
+void sample_heatmap_column(benchmark::State& state)
+{
+    OrderBook book;
+
+    for (std::size_t index = 0; index < baseline_level_count; ++index)
+    {
+        const double offset = static_cast<double>(index) * 0.01;
+        book.apply_update(BookSide::Bid, 10'000.0 - offset, 1.0);
+        book.apply_update(BookSide::Offer, 10'000.01 + offset, 1.0);
+    }
+
+    HeatmapConfig config;
+    config.time_bucket = std::chrono::milliseconds{100};
+    config.price_bin_size = 0.01;
+    config.price_bin_count = 401;
+    HeatmapHistory history(config);
+    MarketTimestamp timestamp{};
+
+    for (auto _ : state)
+    {
+        history.sample(timestamp, book);
+        timestamp += config.time_bucket;
+        benchmark::DoNotOptimize(history.columns().size());
+        benchmark::ClobberMemory();
+    }
+
+    state.SetItemsProcessed(
+        state.iterations()
+        * static_cast<std::int64_t>(config.price_bin_count)
+    );
+}
 }
 
 BENCHMARK(insert_new_bid)->Name("OrderBook/InsertNewBid");
@@ -292,3 +326,4 @@ BENCHMARK(update_existing_bid)->Name("OrderBook/UpdateExistingBid");
 BENCHMARK(erase_bid)->Name("OrderBook/EraseBid");
 BENCHMARK(mixed_book_updates)->Name("OrderBook/MixedBookUpdates");
 BENCHMARK(reconstruct_batch)->Name("Reconstruction/ReconstructBatch");
+BENCHMARK(sample_heatmap_column)->Name("Heatmap/Sample401PriceBins");

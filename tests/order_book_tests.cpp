@@ -69,6 +69,18 @@ TEST(OrderBookTest, UpdateExistingLevel)
     EXPECT_EQ(book.bid_levels(), 1U);
 }
 
+TEST(OrderBookTest, ExposesReadOnlyDepthLevels)
+{
+    OrderBook book;
+    book.apply_update(BookSide::Bid, 99.0, 2.5);
+    book.apply_update(BookSide::Offer, 101.0, 3.5);
+
+    ASSERT_EQ(book.bids().size(), 1U);
+    ASSERT_EQ(book.asks().size(), 1U);
+    EXPECT_DOUBLE_EQ(book.bids().at(99.0), 2.5);
+    EXPECT_DOUBLE_EQ(book.asks().at(101.0), 3.5);
+}
+
 TEST(OrderBookTest, ZeroQuantityDeletesBid)
 {
     OrderBook book;
