@@ -86,6 +86,16 @@ LiveHeatmapResult LiveHeatmapEngine::process(std::string_view raw_message)
     return live_result;
 }
 
+LiveHeatmapResult LiveHeatmapEngine::begin_recovery()
+{
+    LiveHeatmapResult result;
+    sequence_tracker_.reset();
+    reconstructor_.mark_desynchronized();
+    heatmap_.mark_discontinuity();
+    set_status(LiveHeatmapStatus::WaitingForSnapshot, result);
+    return result;
+}
+
 const std::string& LiveHeatmapEngine::product_id() const noexcept
 {
     return product_id_;

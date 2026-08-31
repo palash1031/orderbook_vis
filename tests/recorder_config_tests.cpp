@@ -60,6 +60,17 @@ TEST(RecorderConfigTest, BuildsStructuredSingleProductSubscription)
     EXPECT_EQ(products.front().as_string(), "SOL-USD");
 }
 
+TEST(RecorderConfigTest, BuildsSeparateHeartbeatSubscription)
+{
+    const json::object subscription = json::parse(
+        make_heartbeat_subscription()
+    ).as_object();
+
+    EXPECT_EQ(subscription.at("type").as_string(), "subscribe");
+    EXPECT_EQ(subscription.at("channel").as_string(), "heartbeats");
+    EXPECT_FALSE(subscription.contains("product_ids"));
+}
+
 TEST(RecorderConfigTest, ParsesProductAndOutputOptions)
 {
     constexpr std::array<std::string_view, 0> no_arguments = {};

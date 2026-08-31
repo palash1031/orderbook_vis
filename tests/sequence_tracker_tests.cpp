@@ -137,7 +137,7 @@ TEST(SequenceTrackerTest, NonBookMessageMaintainsGlobalSequenceContinuity)
             "channel":"subscriptions",
             "sequence_num":3,
             "events":[{"subscriptions":{"level2":["BTC-USD"]}}]
-        })");
+    })");
 
     ASSERT_FALSE(subscriptions.book_message.has_value());
     const SequenceResult subscription_sequence =

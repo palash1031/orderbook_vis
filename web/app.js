@@ -36,6 +36,10 @@ const state = {
   data: null,
   streamMode: "replay",
   nextColumnIndex: 0,
+  sourceStatus: null,
+  bookStatus: null,
+  statusDetail: "",
+  retryDelay: 0,
   playbackStatus: "connecting",
   position: 0,
   speed: 1,
@@ -112,6 +116,21 @@ function setConnectionStatus(kind, label) {
   connection.querySelector("span:last-child").textContent = label;
 }
 
+function configureStreamMode(mode) {
+  const live = mode === "live";
+  state.streamMode = mode;
+  controls.playbackBar.classList.toggle("live-mode", live);
+  controls.play.hidden = live;
+  controls.restartPlayback.hidden = live;
+  controls.speed.hidden = live;
+  document.querySelector("#stream-mode-label").textContent = live
+    ? "LIVE ORDER BOOK"
+    : "ORDER BOOK REPLAY";
+  document.querySelector("#chart-title").textContent = live
+    ? "Live resting depth"
+    : "Resting depth";
+}
+
 function validateHello(payload) {
   if (payload?.type !== "hello" || payload.schema_version !== 1) {
     throw new Error("Unsupported heatmap stream metadata");
@@ -163,7 +182,7 @@ function validateColumn(column) {
 function initializeStream(metadata) {
   const hello = validateHello(metadata);
   const live = hello.stream_mode === "live";
-  state.streamMode = hello.stream_mode;
+  configureStreamMode(hello.stream_mode);
   state.nextColumnIndex = live ? hello.first_column_index : 0;
   state.data = {
     product_id: hello.product_id,
@@ -179,16 +198,6 @@ function initializeStream(metadata) {
   };
   state.position = state.nextColumnIndex;
   state.playbackStatus = live ? "connecting" : "paused";
-  controls.playbackBar.classList.toggle("live-mode", live);
-  controls.play.hidden = live;
-  controls.restartPlayback.hidden = live;
-  controls.speed.hidden = live;
-  document.querySelector("#stream-mode-label").textContent = live
-    ? "LIVE ORDER BOOK"
-    : "ORDER BOOK REPLAY";
-  document.querySelector("#chart-title").textContent = live
-    ? "Live resting depth"
-    : "Resting depth";
   updateSummary();
   updatePlaybackUi();
   queueRender();
@@ -211,13 +220,17 @@ function updateSummary() {
     ? formatPrice(latest.mid_price)
     : "—";
   document.querySelector("#window-duration").textContent = formatDuration(summary.duration);
+  const liveColumnState = state.playbackStatus === "live" ? "live" : "retained";
   document.querySelector("#column-count").textContent = live
-    ? `${state.data.columns.length.toLocaleString()} live`
+    ? `${state.data.columns.length.toLocaleString()} ${liveColumnState}`
     : `${state.data.columns.length.toLocaleString()} / ${summary.total.toLocaleString()}`;
   document.querySelector("#price-bin").textContent = `$${formatPrice(state.data.config.price_bin_size)}`;
   document.querySelector("#peak-depth").textContent = formatQuantity(summary.peak);
+  const liveLabel = state.playbackStatus === "live"
+    ? "LIVE"
+    : state.playbackStatus.replaceAll("_", " ").toUpperCase();
   document.querySelector("#replay-range").textContent = live
-    ? `${formatTime(summary.start)} UTC — LIVE`
+    ? `${formatTime(summary.start)} — ${formatTime(summary.end)} UTC · ${liveLabel}`
     : `${formatTime(summary.start)} — ${formatTime(summary.end)} UTC`;
 }
 
@@ -243,17 +256,32 @@ function updatePlaybackUi() {
       ? `${formatTime(latest.timestamp_ms)} UTC`
       : "Waiting for snapshot";
 
-    if (state.playbackStatus === "live") {
-      setConnectionStatus("ready", "Live market data");
-    } else if (state.playbackStatus === "gap") {
-      setConnectionStatus("error", "Sequence gap");
-    } else {
-      setConnectionStatus("", "Connecting to Coinbase");
-    }
+    const retrySeconds = Math.max(1, Math.ceil(state.retryDelay / 1_000));
+    const statusPresentation = {
+      live: ["ready", "Live market data"],
+      gap: ["error", "Sequence gap"],
+      waiting_for_snapshot: ["", "Waiting for fresh snapshot"],
+      disconnected: ["error", "Coinbase disconnected"],
+      reconnecting: [
+        "",
+        state.retryDelay > 0
+          ? `Reconnecting in ${retrySeconds}s`
+          : "Reconnecting to Coinbase",
+      ],
+      connecting: ["", "Connecting to Coinbase"],
+    }[state.playbackStatus] ?? ["", "Connecting to Coinbase"];
+    setConnectionStatus(...statusPresentation);
+    connection.title = state.statusDetail;
 
     if (!state.data || retained === 0) {
       message.hidden = false;
-      message.textContent = "Waiting for Coinbase Level 2 snapshot…";
+      message.textContent = {
+        disconnected: "Coinbase market-data source is disconnected",
+        reconnecting: state.retryDelay > 0
+          ? `Reconnecting to Coinbase in ${retrySeconds} seconds…`
+          : "Reconnecting to Coinbase…",
+        gap: "Sequence gap detected; rebuilding from a fresh snapshot…",
+      }[state.playbackStatus] ?? "Waiting for Coinbase Level 2 snapshot…";
     } else {
       message.hidden = true;
     }
@@ -667,6 +695,27 @@ function handleColumn(payload) {
 }
 
 function handlePlaybackState(payload) {
+  const live = payload.stream_mode === "live" || state.streamMode === "live";
+
+  if (live) {
+    if (!Number.isInteger(payload.position) || !Number.isInteger(payload.speed)) {
+      throw new Error("Live stream sent invalid state");
+    }
+
+    configureStreamMode("live");
+    state.position = payload.position;
+    state.speed = payload.speed;
+    state.playbackStatus = payload.status;
+    state.sourceStatus = payload.source_status ?? null;
+    state.bookStatus = payload.book_status ?? null;
+    state.statusDetail = typeof payload.message === "string" ? payload.message : "";
+    state.retryDelay = Number.isFinite(payload.retry_ms) ? payload.retry_ms : 0;
+    updateSummary();
+    updatePlaybackUi();
+    queueRender();
+    return;
+  }
+
   if (!state.data) return;
   if (!Number.isInteger(payload.position) || !Number.isInteger(payload.speed)) {
     throw new Error("Replay stream sent invalid playback state");

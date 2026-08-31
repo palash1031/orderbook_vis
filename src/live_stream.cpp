@@ -13,16 +13,52 @@ namespace json = boost::json;
 
 namespace
 {
-const char* status_name(LiveHeatmapStatus status)
+const char* source_status_name(LiveSourceStatus status)
+{
+    switch (status)
+    {
+        case LiveSourceStatus::Connecting:
+            return "connecting";
+        case LiveSourceStatus::Connected:
+            return "connected";
+        case LiveSourceStatus::Disconnected:
+            return "disconnected";
+        case LiveSourceStatus::Reconnecting:
+            return "reconnecting";
+    }
+
+    return "connecting";
+}
+
+const char* book_status_name(LiveHeatmapStatus status)
 {
     switch (status)
     {
         case LiveHeatmapStatus::WaitingForSnapshot:
-            return "connecting";
+            return "waiting_for_snapshot";
         case LiveHeatmapStatus::Live:
             return "live";
         case LiveHeatmapStatus::Gap:
             return "gap";
+    }
+
+    return "waiting_for_snapshot";
+}
+
+const char* effective_status_name(
+    LiveSourceStatus source_status,
+    LiveHeatmapStatus book_status)
+{
+    switch (source_status)
+    {
+        case LiveSourceStatus::Connecting:
+            return "connecting";
+        case LiveSourceStatus::Disconnected:
+            return "disconnected";
+        case LiveSourceStatus::Reconnecting:
+            return "reconnecting";
+        case LiveSourceStatus::Connected:
+            return book_status_name(book_status);
     }
 
     return "connecting";
@@ -102,14 +138,9 @@ std::shared_ptr<LiveStreamSubscriber> LiveStreamHub::subscribe()
     remove_expired_subscribers();
     subscribers_.push_back(subscriber);
 
-    if (ready_)
-    {
-        subscriber->replace_queue(snapshot_messages());
-    }
-    else if (!error_message_.empty())
-    {
-        subscriber->enqueue(error_message_);
-    }
+    subscriber->replace_queue(
+        ready_ ? snapshot_messages() : pending_messages()
+    );
 
     return subscriber;
 }
@@ -165,11 +196,13 @@ void LiveStreamHub::publish(
     if (ready_)
     {
         hello_message_ = hello_message(engine);
-        const std::size_t position = columns_.empty()
+        position_ = columns_.empty()
             ? 0
             : columns_.back().index + 1;
-        state_message_ = state_message(engine.status(), position);
     }
+
+    book_status_ = engine.status();
+    refresh_state_message();
 
     if (became_ready)
     {
@@ -204,6 +237,29 @@ void LiveStreamHub::publish(
             update.column_json
         ));
     }
+}
+
+void LiveStreamHub::publish_source_status(
+    LiveSourceStatus status,
+    std::string_view detail,
+    std::chrono::milliseconds retry_delay)
+{
+    std::lock_guard lock(mutex_);
+    remove_expired_subscribers();
+    source_status_ = status;
+    source_detail_ = detail;
+    retry_delay_ = retry_delay;
+
+    if (
+        status == LiveSourceStatus::Connecting
+        || status == LiveSourceStatus::Connected
+    )
+    {
+        error_message_.clear();
+    }
+
+    refresh_state_message();
+    enqueue_to_all(state_message_);
 }
 
 void LiveStreamHub::publish_error(std::string_view message)
@@ -249,28 +305,38 @@ std::string LiveStreamHub::hello_message(
     return json::serialize(hello);
 }
 
-std::string LiveStreamHub::state_message(
-    LiveHeatmapStatus status,
-    std::size_t position) const
+std::string LiveStreamHub::state_message() const
 {
     json::object state;
     state["type"] = "state";
-    state["status"] = status_name(status);
+    state["stream_mode"] = "live";
+    state["status"] = effective_status_name(
+        source_status_,
+        book_status_
+    );
+    state["source_status"] = source_status_name(source_status_);
+    state["book_status"] = book_status_name(book_status_);
     state["speed"] = 1;
-    state["position"] = position;
+    state["position"] = position_;
+
+    if (!source_detail_.empty())
+    {
+        state["message"] = source_detail_;
+    }
+
+    if (retry_delay_.count() > 0)
+    {
+        state["retry_ms"] = retry_delay_.count();
+    }
+
     return json::serialize(state);
 }
 
 std::vector<std::string> LiveStreamHub::snapshot_messages() const
 {
     std::vector<std::string> messages;
-    messages.reserve(columns_.size() + 2);
+    messages.reserve(columns_.size() + 3);
     messages.push_back(hello_message_);
-
-    if (!state_message_.empty())
-    {
-        messages.push_back(state_message_);
-    }
 
     for (const StoredColumn& column : columns_)
     {
@@ -281,7 +347,34 @@ std::vector<std::string> LiveStreamHub::snapshot_messages() const
         ));
     }
 
+    messages.push_back(state_message_);
+
+    if (!error_message_.empty())
+    {
+        messages.push_back(error_message_);
+    }
+
     return messages;
+}
+
+std::vector<std::string> LiveStreamHub::pending_messages() const
+{
+    std::vector<std::string> messages;
+    messages.push_back(
+        state_message_.empty() ? state_message() : state_message_
+    );
+
+    if (!error_message_.empty())
+    {
+        messages.push_back(error_message_);
+    }
+
+    return messages;
+}
+
+void LiveStreamHub::refresh_state_message()
+{
+    state_message_ = state_message();
 }
 
 void LiveStreamHub::remove_expired_subscribers()

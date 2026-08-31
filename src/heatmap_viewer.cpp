@@ -1,5 +1,5 @@
 #include "coinbase_level2_stream.hpp"
-#include "live_heatmap_engine.hpp"
+#include "live_source.hpp"
 #include "live_stream.hpp"
 #include "recorder_config.hpp"
 #include "replay_config.hpp"
@@ -380,92 +380,21 @@ bool write_websocket_message(
     return !error;
 }
 
-std::optional<std::string> coinbase_error_message(
-    std::string_view raw_message)
-{
-    try
-    {
-        const json::object& message = json::parse(raw_message).as_object();
-        const auto* type = message.if_contains("type");
-        const auto* channel = message.if_contains("channel");
-        const bool is_error =
-            (type && type->is_string() && type->as_string() == "error")
-            || (
-                channel
-                && channel->is_string()
-                && channel->as_string() == "error"
-            );
-
-        if (!is_error)
-        {
-            return std::nullopt;
-        }
-
-        for (const char* field : {"message", "error", "reason"})
-        {
-            const auto* value = message.if_contains(field);
-
-            if (value && value->is_string())
-            {
-                const auto& text = value->as_string();
-                return std::string(text.c_str(), text.size());
-            }
-        }
-
-        return std::string("Coinbase rejected the live subscription");
-    }
-    catch (const std::exception&)
-    {
-        return std::nullopt;
-    }
-}
-
 void run_live_source(
     std::string product_id,
     HeatmapConfig heatmap_config,
     std::shared_ptr<LiveStreamHub> hub)
 {
-    try
-    {
-        LiveHeatmapEngine engine(product_id, std::move(heatmap_config));
-        CoinbaseLevel2Stream coinbase(product_id);
-        std::cout
-            << "Coinbase live source connected for "
-            << product_id
-            << '\n';
-
-        while (true)
+    LiveSourceRunner runner(
+        product_id,
+        std::move(heatmap_config),
+        std::move(hub),
+        [product_id]
         {
-            const std::string message = coinbase.read();
-
-            if (const auto error = coinbase_error_message(message))
-            {
-                hub->publish_error(*error);
-                std::cerr << "Coinbase subscription error: " << *error << '\n';
-                return;
-            }
-
-            try
-            {
-                const LiveHeatmapResult result = engine.process(message);
-                hub->publish(engine, result);
-            }
-            catch (const std::exception& error)
-            {
-                std::cerr
-                    << "Coinbase live message ignored: "
-                    << error.what()
-                    << '\n';
-            }
+            return std::make_unique<CoinbaseLevel2Stream>(product_id);
         }
-    }
-    catch (const std::exception& error)
-    {
-        const std::string message =
-            std::string("Coinbase live source disconnected: ") + error.what();
-        hub->publish_error(message);
-        std::cerr << message << '\n';
-    }
+    );
+    runner.run();
 }
 
 void run_replay_websocket(

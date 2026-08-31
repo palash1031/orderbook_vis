@@ -126,6 +126,80 @@ TEST(LiveHeatmapEngineTest, ReportsGapAndRecoversOnFreshSnapshot)
     EXPECT_EQ(engine.status(), LiveHeatmapStatus::Live);
 }
 
+TEST(LiveHeatmapEngineTest, RecoveryRequiresSnapshotAndPreservesGrid)
+{
+    LiveHeatmapEngine engine("ETH-USD");
+    engine.process(snapshot());
+    const double original_bin =
+        *engine.heatmap().resolved_price_bin_size();
+
+    const LiveHeatmapResult recovery = engine.begin_recovery();
+    ASSERT_TRUE(recovery.status_change.has_value());
+    EXPECT_EQ(
+        *recovery.status_change,
+        LiveHeatmapStatus::WaitingForSnapshot
+    );
+    EXPECT_EQ(engine.status(), LiveHeatmapStatus::WaitingForSnapshot);
+    EXPECT_DOUBLE_EQ(
+        *engine.heatmap().resolved_price_bin_size(),
+        original_bin
+    );
+
+    const LiveHeatmapResult ignored_update = engine.process(message(
+        "update",
+        update("bid", "3999.95", "9.0"),
+        0,
+        "2026-08-27T19:28:02.200000000Z"
+    ));
+    EXPECT_TRUE(ignored_update.columns.empty());
+    EXPECT_EQ(engine.status(), LiveHeatmapStatus::WaitingForSnapshot);
+
+    const LiveHeatmapResult recovered = engine.process(snapshot(
+        1,
+        "2026-08-27T19:28:02.500000000Z"
+    ));
+    ASSERT_TRUE(recovered.status_change.has_value());
+    EXPECT_EQ(*recovered.status_change, LiveHeatmapStatus::Live);
+    ASSERT_EQ(recovered.columns.size(), 1U);
+    EXPECT_EQ(recovered.columns.front().index, 1U);
+    EXPECT_DOUBLE_EQ(
+        *engine.heatmap().resolved_price_bin_size(),
+        original_bin
+    );
+}
+
+TEST(LiveHeatmapEngineTest, NonBookChannelsMaintainSequenceContinuity)
+{
+    LiveHeatmapEngine engine("ETH-USD");
+    engine.process(snapshot());
+
+    const LiveHeatmapResult subscription = engine.process(R"({
+        "channel":"subscriptions",
+        "timestamp":"2026-08-27T19:28:02.025000000Z",
+        "sequence_num":1,
+        "events":[{"subscriptions":{"level2":["ETH-USD"]}}]
+    })");
+    EXPECT_TRUE(subscription.columns.empty());
+
+    const LiveHeatmapResult heartbeat = engine.process(R"({
+        "channel":"heartbeats",
+        "timestamp":"2026-08-27T19:28:02.050000000Z",
+        "sequence_num":2,
+        "events":[{"heartbeat_counter":"1"}]
+    })");
+    EXPECT_TRUE(heartbeat.columns.empty());
+
+    const LiveHeatmapResult update_result = engine.process(message(
+        "update",
+        update("bid", "3999.95", "3.0"),
+        3,
+        "2026-08-27T19:28:02.100000000Z"
+    ));
+    ASSERT_EQ(update_result.columns.size(), 1U);
+    EXPECT_FALSE(update_result.columns.front().replaces_existing);
+    EXPECT_EQ(engine.status(), LiveHeatmapStatus::Live);
+}
+
 TEST(LiveHeatmapEngineTest, RejectsUnexpectedProduct)
 {
     LiveHeatmapEngine engine("SOL-USD");

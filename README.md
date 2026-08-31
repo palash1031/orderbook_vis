@@ -46,9 +46,13 @@ process connects to Coinbase, validates message sequence, reconstructs the Level
 `/ws/heatmap`. The browser never connects to Coinbase directly. A late browser
 receives the retained rolling window before following new columns.
 
-The dashboard marks a detected sequence gap and waits for a fresh snapshot
-before resuming. Automatic network reconnect and resubscription are not yet
-implemented, so restart the viewer after a Coinbase connection failure.
+The viewer also subscribes to Coinbase heartbeats so quiet markets keep their
+connection open. When the socket closes or a sequence gap is detected, it marks
+the retained chart stale, reconnects with exponential backoff and jitter,
+resubscribes, and refuses further updates until a fresh Level 2 snapshot rebuilds
+the book. The frozen price grid and rolling history survive recovery, with a
+visible discontinuity between the old and newly synchronized data. Subscription
+errors such as an unknown product remain visible and are not retried endlessly.
 
 ## Generate and view a replay heatmap
 

@@ -39,6 +39,7 @@ public:
     );
 
     LiveHeatmapResult process(std::string_view raw_message);
+    LiveHeatmapResult begin_recovery();
 
     const std::string& product_id() const noexcept;
     LiveHeatmapStatus status() const noexcept;

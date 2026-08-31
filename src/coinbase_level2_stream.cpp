@@ -67,6 +67,8 @@ CoinbaseLevel2Stream::CoinbaseLevel2Stream(std::string_view product_id)
 
     const std::string subscription = make_level2_subscription(product_id);
     connection.stream.write(asio::buffer(subscription));
+    const std::string heartbeat_subscription = make_heartbeat_subscription();
+    connection.stream.write(asio::buffer(heartbeat_subscription));
 }
 
 CoinbaseLevel2Stream::~CoinbaseLevel2Stream() = default;

@@ -13,6 +13,14 @@
 #include <string_view>
 #include <vector>
 
+enum class LiveSourceStatus
+{
+    Connecting,
+    Connected,
+    Disconnected,
+    Reconnecting
+};
+
 class LiveStreamSubscriber
 {
 public:
@@ -40,6 +48,11 @@ public:
         const LiveHeatmapEngine& engine,
         const LiveHeatmapResult& result
     );
+    void publish_source_status(
+        LiveSourceStatus status,
+        std::string_view detail = {},
+        std::chrono::milliseconds retry_delay = {}
+    );
     void publish_error(std::string_view message);
 
 private:
@@ -50,11 +63,10 @@ private:
     };
 
     std::string hello_message(const LiveHeatmapEngine& engine) const;
-    std::string state_message(
-        LiveHeatmapStatus status,
-        std::size_t position
-    ) const;
+    std::string state_message() const;
     std::vector<std::string> snapshot_messages() const;
+    std::vector<std::string> pending_messages() const;
+    void refresh_state_message();
     void remove_expired_subscribers();
     void enqueue_to_all(const std::string& message);
 
@@ -64,6 +76,11 @@ private:
     std::string hello_message_;
     std::string state_message_;
     std::string error_message_;
+    std::string source_detail_;
     std::size_t max_columns_ = 0;
+    std::size_t position_ = 0;
+    std::chrono::milliseconds retry_delay_{};
+    LiveSourceStatus source_status_ = LiveSourceStatus::Connecting;
+    LiveHeatmapStatus book_status_ = LiveHeatmapStatus::WaitingForSnapshot;
     bool ready_ = false;
 };

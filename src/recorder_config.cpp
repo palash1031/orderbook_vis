@@ -134,6 +134,14 @@ std::string make_level2_subscription(std::string_view product_id)
     return json::serialize(subscription);
 }
 
+std::string make_heartbeat_subscription()
+{
+    json::object subscription;
+    subscription["type"] = "subscribe";
+    subscription["channel"] = "heartbeats";
+    return json::serialize(subscription);
+}
+
 RecorderOptions parse_recorder_options(
     std::span<const std::string_view> arguments)
 {
