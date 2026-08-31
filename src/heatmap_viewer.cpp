@@ -63,6 +63,7 @@ struct ServerState
     ViewerAssets assets;
     std::optional<ReplayStreamData> replay;
     std::shared_ptr<LiveStreamHub> live;
+    std::shared_ptr<LiveMarketService> live_service;
     std::string metadata;
     bool live_mode = false;
 };
@@ -240,12 +241,15 @@ std::shared_ptr<ServerState> load_state(const ViewerOptions& options)
     if (options.live)
     {
         state->live = std::make_shared<LiveStreamHub>();
-        json::object metadata;
-        metadata["type"] = "metadata";
-        metadata["stream_mode"] = "live";
-        metadata["product_id"] = options.product_id;
-        metadata["status"] = "connecting";
-        state->metadata = json::serialize(metadata);
+        state->live_service = std::make_shared<LiveMarketService>(
+            options.product_id,
+            options.live_heatmap_config,
+            state->live,
+            [](std::string_view product_id)
+            {
+                return std::make_unique<CoinbaseLevel2Stream>(product_id);
+            }
+        );
     }
     else
     {
@@ -321,7 +325,21 @@ http::response<http::string_body> make_response(
         health["status"] = "ok";
         health["stream"] = "/ws/heatmap";
         health["mode"] = state.live_mode ? "live" : "replay";
+        if (state.live_mode)
+        {
+            health["product_id"] = state.live_service->product_id();
+        }
         response.body() = json::serialize(health);
+    }
+    else if (request.target() == "/api/metadata" && state.live_mode)
+    {
+        response.result(http::status::ok);
+        response.set(http::field::content_type, "application/json");
+        json::object metadata;
+        metadata["type"] = "metadata";
+        metadata["stream_mode"] = "live";
+        metadata["product_id"] = state.live_service->product_id();
+        response.body() = json::serialize(metadata);
     }
     else
     {
@@ -380,21 +398,9 @@ bool write_websocket_message(
     return !error;
 }
 
-void run_live_source(
-    std::string product_id,
-    HeatmapConfig heatmap_config,
-    std::shared_ptr<LiveStreamHub> hub)
+void run_live_source(std::shared_ptr<LiveMarketService> service)
 {
-    LiveSourceRunner runner(
-        product_id,
-        std::move(heatmap_config),
-        std::move(hub),
-        [product_id]
-        {
-            return std::make_unique<CoinbaseLevel2Stream>(product_id);
-        }
-    );
-    runner.run();
+    service->run();
 }
 
 void run_replay_websocket(
@@ -558,7 +564,8 @@ void run_replay_websocket(
 void run_live_websocket(
     tcp::socket socket,
     http::request<http::string_body> request,
-    const std::shared_ptr<LiveStreamHub>& hub)
+    const std::shared_ptr<LiveStreamHub>& hub,
+    const std::shared_ptr<LiveMarketService>& service)
 {
     websocket::stream<tcp::socket> stream{std::move(socket)};
     stream.set_option(websocket::stream_base::decorator(
@@ -610,15 +617,39 @@ void run_live_websocket(
             return;
         }
 
-        buffer.consume(buffer.size());
-
-        if (!write_websocket_message(
-                stream,
-                error_message("Playback controls are unavailable in live mode")
-            ))
+        if (!stream.got_text())
         {
-            return;
+            if (!write_websocket_message(
+                    stream,
+                    error_message("Live controls must be JSON text")
+                ))
+            {
+                return;
+            }
         }
+        else
+        {
+            const std::string command = beast::buffers_to_string(
+                buffer.data()
+            );
+
+            try
+            {
+                service->apply_control(command);
+            }
+            catch (const std::exception& control_error)
+            {
+                if (!write_websocket_message(
+                        stream,
+                        error_message(control_error.what())
+                    ))
+                {
+                    return;
+                }
+            }
+        }
+
+        buffer.consume(buffer.size());
     }
 }
 
@@ -645,7 +676,8 @@ void handle_connection(
                 run_live_websocket(
                     std::move(socket),
                     std::move(request),
-                    state->live
+                    state->live,
+                    state->live_service
                 );
             }
             else
@@ -717,9 +749,7 @@ int main(int argc, char* argv[])
         {
             std::thread(
                 run_live_source,
-                options->product_id,
-                options->live_heatmap_config,
-                state->live
+                state->live_service
             ).detach();
         }
 

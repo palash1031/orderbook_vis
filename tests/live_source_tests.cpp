@@ -31,13 +31,14 @@ std::string message(
     const std::string& type,
     const std::string& updates,
     unsigned int sequence,
-    const std::string& timestamp)
+    const std::string& timestamp,
+    const std::string& product_id = "SOL-USD")
 {
     return
         R"({"channel":"l2_data","timestamp":")" + timestamp
         + R"(","sequence_num":)" + std::to_string(sequence)
         + R"(,"events":[{"type":")" + type
-        + R"(","product_id":"SOL-USD","updates":[)" + updates
+        + R"(","product_id":")" + product_id + R"(","updates":[)" + updates
         + R"(]}]})";
 }
 
@@ -327,4 +328,119 @@ TEST(LiveSourceRunnerTest, SequenceGapForcesReconnect)
 
     EXPECT_TRUE(saw_gap);
     EXPECT_TRUE(saw_reconnecting);
+}
+
+TEST(LiveMarketServiceTest, NormalizesAndValidatesSwitchControls)
+{
+    auto hub = std::make_shared<LiveStreamHub>();
+    LiveMarketService service(
+        "sol-usd",
+        {},
+        hub,
+        [](std::string_view) -> std::unique_ptr<LiveMessageSource>
+        {
+            return nullptr;
+        }
+    );
+    const auto client = hub->subscribe();
+    const std::vector<json::object> initial = drain(client);
+    ASSERT_EQ(initial.size(), 1U);
+    EXPECT_EQ(initial.front().at("product_id").as_string(), "SOL-USD");
+
+    service.apply_control(
+        R"({"action":"switch_product","product_id":" eth-usd "})"
+    );
+    EXPECT_EQ(service.product_id(), "ETH-USD");
+    const std::vector<json::object> switched = drain(client);
+    ASSERT_EQ(switched.size(), 2U);
+    EXPECT_EQ(switched[0].at("type").as_string(), "reset");
+    EXPECT_EQ(switched[0].at("product_id").as_string(), "ETH-USD");
+    EXPECT_EQ(switched[1].at("status").as_string(), "connecting");
+
+    EXPECT_THROW(
+        service.apply_control(
+            R"({"action":"switch_product","product_id":"ETH/USD"})"
+        ),
+        std::invalid_argument
+    );
+    EXPECT_THROW(
+        service.apply_control(R"({"action":"pause"})"),
+        std::invalid_argument
+    );
+    EXPECT_THROW(service.apply_control("not json"), std::invalid_argument);
+}
+
+TEST(LiveMarketServiceTest, RunningServiceSwitchesToFreshProductSnapshot)
+{
+    auto hub = std::make_shared<LiveStreamHub>();
+    LiveMarketService* service_pointer = nullptr;
+    bool stop = false;
+    std::vector<std::string> opened_products;
+    LiveMarketService service(
+        "SOL-USD",
+        {},
+        hub,
+        [&](std::string_view product_id)
+            -> std::unique_ptr<LiveMessageSource>
+        {
+            opened_products.emplace_back(product_id);
+
+            if (product_id == "SOL-USD")
+            {
+                return std::make_unique<ScriptedSource>(
+                    std::vector<std::string>{snapshot(
+                        0,
+                        "2026-08-27T19:28:02.000000000Z"
+                    )},
+                    [&]
+                    {
+                        service_pointer->switch_product("ETH-USD");
+                    }
+                );
+            }
+
+            return std::make_unique<ScriptedSource>(
+                std::vector<std::string>{message(
+                    "snapshot",
+                    update("bid", "3999.95", "1.0") + ","
+                        + update("offer", "4000.05", "2.0"),
+                    0,
+                    "2026-08-27T19:28:03.000000000Z",
+                    "ETH-USD"
+                )},
+                [&stop]
+                {
+                    stop = true;
+                }
+            );
+        },
+        {
+            std::chrono::milliseconds{1},
+            std::chrono::milliseconds{2},
+            0.0
+        },
+        [](std::chrono::milliseconds)
+        {
+        }
+    );
+    service_pointer = &service;
+    const auto client = hub->subscribe();
+
+    service.run([&stop]
+    {
+        return stop;
+    });
+
+    EXPECT_EQ(
+        opened_products,
+        (std::vector<std::string>{"SOL-USD", "ETH-USD"})
+    );
+    EXPECT_EQ(service.product_id(), "ETH-USD");
+    const std::vector<json::object> messages = drain(client);
+    ASSERT_GE(messages.size(), 3U);
+    EXPECT_EQ(messages[0].at("type").as_string(), "hello");
+    EXPECT_EQ(messages[0].at("product_id").as_string(), "ETH-USD");
+    EXPECT_EQ(messages[1].at("type").as_string(), "column");
+    EXPECT_EQ(messages[1].at("index").as_int64(), 0);
+    EXPECT_EQ(messages[2].at("status").as_string(), "live");
 }

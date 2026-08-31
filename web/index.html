@@ -20,8 +20,15 @@
 
     <div class="instrument" aria-label="Loaded market">
       <span class="eyebrow">MARKET</span>
-      <strong id="product-id">—</strong>
-      <span id="last-mid" class="price">—</span>
+      <div class="market-row">
+        <select id="market-select" aria-label="Select live market" disabled>
+          <option value="BTC-USD">BTC-USD</option>
+          <option value="ETH-USD">ETH-USD</option>
+          <option value="SOL-USD">SOL-USD</option>
+          <option value="DOGE-USD">DOGE-USD</option>
+        </select>
+        <span id="last-mid" class="price">—</span>
+      </div>
     </div>
 
     <div class="connection" id="connection-state" role="status">

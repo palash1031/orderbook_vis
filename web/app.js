@@ -15,6 +15,7 @@ const controls = {
   progress: document.querySelector("#replay-progress"),
   playbackTime: document.querySelector("#playback-time"),
   playbackProgress: document.querySelector("#playback-progress"),
+  market: document.querySelector("#market-select"),
   intensity: document.querySelector("#intensity"),
   intensityValue: document.querySelector("#intensity-value"),
   priceWindow: document.querySelector("#price-window"),
@@ -116,6 +117,19 @@ function setConnectionStatus(kind, label) {
   connection.querySelector("span:last-child").textContent = label;
 }
 
+function syncMarketControl(productId) {
+  if (typeof productId !== "string" || productId.length === 0) return;
+
+  const existing = Array.from(controls.market.options)
+    .some((option) => option.value === productId);
+
+  if (!existing) {
+    controls.market.add(new Option(productId, productId));
+  }
+
+  controls.market.value = productId;
+}
+
 function configureStreamMode(mode) {
   const live = mode === "live";
   state.streamMode = mode;
@@ -123,6 +137,9 @@ function configureStreamMode(mode) {
   controls.play.hidden = live;
   controls.restartPlayback.hidden = live;
   controls.speed.hidden = live;
+  controls.market.disabled = !live
+    || !state.socket
+    || state.socket.readyState !== WebSocket.OPEN;
   document.querySelector("#stream-mode-label").textContent = live
     ? "LIVE ORDER BOOK"
     : "ORDER BOOK REPLAY";
@@ -198,6 +215,7 @@ function initializeStream(metadata) {
   };
   state.position = state.nextColumnIndex;
   state.playbackStatus = live ? "connecting" : "paused";
+  syncMarketControl(hello.product_id);
   updateSummary();
   updatePlaybackUi();
   queueRender();
@@ -215,7 +233,7 @@ function updateSummary() {
     summary.duration = Math.max(0, summary.end - summary.start);
   }
 
-  document.querySelector("#product-id").textContent = state.data.product_id || "UNKNOWN";
+  syncMarketControl(state.data.product_id);
   document.querySelector("#last-mid").textContent = latest
     ? formatPrice(latest.mid_price)
     : "—";
@@ -242,6 +260,9 @@ function updatePlaybackUi() {
   );
   const total = state.data?.summary.total ?? 0;
   const latest = state.data?.columns.at(-1);
+  controls.market.disabled = state.streamMode !== "live"
+    || !state.socket
+    || state.socket.readyState !== WebSocket.OPEN;
 
   if (state.streamMode === "live") {
     const retained = state.data?.columns.length ?? 0;
@@ -638,6 +659,39 @@ function sendControl(action, fields = {}) {
   state.socket.send(JSON.stringify({ action, ...fields }));
 }
 
+function sendLiveControl(action, fields = {}) {
+  if (state.streamMode !== "live") return false;
+  if (!state.socket || state.socket.readyState !== WebSocket.OPEN) return false;
+  state.socket.send(JSON.stringify({ action, ...fields }));
+  return true;
+}
+
+function clearStreamSummary(productId) {
+  syncMarketControl(productId);
+  document.querySelector("#last-mid").textContent = "—";
+  document.querySelector("#window-duration").textContent = "—";
+  document.querySelector("#column-count").textContent = "0 retained";
+  document.querySelector("#price-bin").textContent = "—";
+  document.querySelector("#peak-depth").textContent = "—";
+  document.querySelector("#replay-range").textContent = "—";
+}
+
+function resetLiveProduct(productId) {
+  configureStreamMode("live");
+  state.data = null;
+  state.nextColumnIndex = 0;
+  state.position = 0;
+  state.sourceStatus = "connecting";
+  state.bookStatus = "waiting_for_snapshot";
+  state.statusDetail = "";
+  state.retryDelay = 0;
+  state.playbackStatus = "connecting";
+  clearReading();
+  clearStreamSummary(productId);
+  updatePlaybackUi();
+  queueRender();
+}
+
 function resetStreamColumns() {
   if (!state.data) return;
   state.data.columns = [];
@@ -710,6 +764,7 @@ function handlePlaybackState(payload) {
     state.bookStatus = payload.book_status ?? null;
     state.statusDetail = typeof payload.message === "string" ? payload.message : "";
     state.retryDelay = Number.isFinite(payload.retry_ms) ? payload.retry_ms : 0;
+    syncMarketControl(payload.product_id);
     updateSummary();
     updatePlaybackUi();
     queueRender();
@@ -747,7 +802,11 @@ function handleStreamMessage(event) {
   } else if (payload.type === "state") {
     handlePlaybackState(payload);
   } else if (payload.type === "reset") {
-    resetStreamColumns();
+    if (payload.scope === "product") {
+      resetLiveProduct(payload.product_id);
+    } else {
+      resetStreamColumns();
+    }
   } else if (payload.type === "error") {
     setConnectionStatus("error", payload.message || "Heatmap stream failed");
     message.hidden = false;
@@ -762,6 +821,7 @@ function connectStream() {
 
   socket.addEventListener("open", () => {
     setConnectionStatus("", "Loading heatmap stream");
+    controls.market.disabled = state.streamMode !== "live";
   });
 
   socket.addEventListener("message", (event) => {
@@ -782,6 +842,7 @@ function connectStream() {
     controls.play.disabled = true;
     controls.restartPlayback.disabled = true;
     controls.speed.disabled = true;
+    controls.market.disabled = true;
     setConnectionStatus("error", "Stream disconnected");
 
     if (!state.data || state.data.columns.length === 0) {
@@ -796,6 +857,15 @@ function connectStream() {
 }
 
 function bindControls() {
+  controls.market.addEventListener("change", () => {
+    if (!sendLiveControl("switch_product", {
+      product_id: controls.market.value,
+    })) return;
+
+    state.playbackStatus = "connecting";
+    setConnectionStatus("", `Switching to ${controls.market.value}`);
+  });
+
   controls.play.addEventListener("click", () => {
     sendControl(state.playbackStatus === "playing" ? "pause" : "play");
   });

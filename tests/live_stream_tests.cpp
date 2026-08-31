@@ -26,13 +26,14 @@ std::string message(
     const std::string& type,
     const std::string& updates,
     unsigned int sequence,
-    const std::string& timestamp)
+    const std::string& timestamp,
+    const std::string& product_id = "SOL-USD")
 {
     return
         R"({"channel":"l2_data","timestamp":")" + timestamp
         + R"(","sequence_num":)" + std::to_string(sequence)
         + R"(,"events":[{"type":")" + type
-        + R"(","product_id":"SOL-USD","updates":[)" + updates
+        + R"(","product_id":")" + product_id + R"(","updates":[)" + updates
         + R"(]}]})";
 }
 
@@ -208,4 +209,70 @@ TEST(LiveStreamTest, ReconnectClearsErrorAndWaitsForFreshSnapshot)
     EXPECT_FALSE(state.contains("message"));
     EXPECT_FALSE(state.contains("retry_ms"));
     EXPECT_FALSE(client->wait_for_message(std::chrono::milliseconds{0}));
+}
+
+TEST(LiveStreamTest, ProductSessionClearsBacklogAndRejectsStalePublisher)
+{
+    LiveStreamHub hub;
+    const LiveStreamSessionId sol_session =
+        hub.begin_product_session("SOL-USD");
+    LiveHeatmapEngine sol_engine("SOL-USD");
+    hub.publish_source_status(sol_session, LiveSourceStatus::Connected);
+    hub.publish(sol_session, sol_engine, sol_engine.process(snapshot()));
+    const auto client = hub.subscribe();
+    EXPECT_EQ(next_message(client).at("product_id").as_string(), "SOL-USD");
+    EXPECT_EQ(next_message(client).at("type").as_string(), "column");
+    EXPECT_EQ(next_message(client).at("status").as_string(), "live");
+
+    const LiveHeatmapResult stale_update = sol_engine.process(message(
+        "update",
+        update("bid", "199.99", "9.0"),
+        1,
+        "2026-08-27T19:28:02.100000000Z"
+    ));
+    const LiveStreamSessionId eth_session =
+        hub.begin_product_session("ETH-USD");
+    hub.publish(sol_session, sol_engine, stale_update);
+    hub.publish_source_status(
+        sol_session,
+        LiveSourceStatus::Disconnected,
+        "stale source"
+    );
+
+    const json::object reset = next_message(client);
+    EXPECT_EQ(reset.at("type").as_string(), "reset");
+    EXPECT_EQ(reset.at("scope").as_string(), "product");
+    EXPECT_EQ(reset.at("product_id").as_string(), "ETH-USD");
+    const json::object waiting = next_message(client);
+    EXPECT_EQ(waiting.at("product_id").as_string(), "ETH-USD");
+    EXPECT_EQ(waiting.at("status").as_string(), "connecting");
+    EXPECT_FALSE(client->wait_for_message(std::chrono::milliseconds{0}));
+
+    LiveHeatmapEngine eth_engine("ETH-USD");
+    const std::string eth_snapshot = message(
+        "snapshot",
+        update("bid", "3999.95", "1.0") + ","
+            + update("offer", "4000.05", "2.0"),
+        0,
+        "2026-08-27T19:28:03.000000000Z",
+        "ETH-USD"
+    );
+    hub.publish_source_status(eth_session, LiveSourceStatus::Connected);
+    hub.publish(
+        eth_session,
+        eth_engine,
+        eth_engine.process(eth_snapshot)
+    );
+
+    const json::object hello = next_message(client);
+    EXPECT_EQ(hello.at("type").as_string(), "hello");
+    EXPECT_EQ(hello.at("product_id").as_string(), "ETH-USD");
+    EXPECT_DOUBLE_EQ(
+        json::value_to<double>(
+            hello.at("config").as_object().at("price_bin_size")
+        ),
+        0.05
+    );
+    EXPECT_EQ(next_message(client).at("index").as_int64(), 0);
+    EXPECT_EQ(next_message(client).at("status").as_string(), "live");
 }

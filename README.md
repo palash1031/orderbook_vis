@@ -46,6 +46,14 @@ process connects to Coinbase, validates message sequence, reconstructs the Level
 `/ws/heatmap`. The browser never connects to Coinbase directly. A late browser
 receives the retained rolling window before following new columns.
 
+In live mode, use the market selector in the header to switch between BTC-USD,
+ETH-USD, SOL-USD, and DOGE-USD without restarting the viewer. A switch is global
+to the local viewer process and all connected browser tabs. It invalidates the
+old source immediately, clears the previous product's columns, opens a new
+Coinbase subscription, and waits for that product's fresh snapshot before
+drawing. Automatic price resolution is selected again for the new product; a
+manual `--price-bin` remains fixed across selections.
+
 The viewer also subscribes to Coinbase heartbeats so quiet markets keep their
 connection open. When the socket closes or a sequence gap is detected, it marks
 the retained chart stale, reconnects with exponential backoff and jitter,

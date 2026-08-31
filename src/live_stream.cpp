@@ -87,6 +87,46 @@ std::string protocol_error(std::string_view message)
 }
 }
 
+LiveStreamSessionId LiveStreamHub::begin_product_session(
+    std::string_view product_id)
+{
+    if (product_id.empty())
+    {
+        throw std::invalid_argument("Live product session requires a product");
+    }
+
+    std::lock_guard lock(mutex_);
+    remove_expired_subscribers();
+    ++session_id_;
+    product_id_ = product_id;
+    columns_.clear();
+    hello_message_.clear();
+    error_message_.clear();
+    source_detail_.clear();
+    max_columns_ = 0;
+    position_ = 0;
+    retry_delay_ = {};
+    source_status_ = LiveSourceStatus::Connecting;
+    book_status_ = LiveHeatmapStatus::WaitingForSnapshot;
+    ready_ = false;
+    refresh_state_message();
+
+    const std::vector<std::string> messages{
+        product_reset_message(),
+        state_message_
+    };
+
+    for (const auto& weak_subscriber : subscribers_)
+    {
+        if (const auto subscriber = weak_subscriber.lock())
+        {
+            subscriber->replace_queue(messages);
+        }
+    }
+
+    return session_id_;
+}
+
 std::optional<std::string> LiveStreamSubscriber::wait_for_message(
     std::chrono::milliseconds timeout)
 {
@@ -149,12 +189,34 @@ void LiveStreamHub::publish(
     const LiveHeatmapEngine& engine,
     const LiveHeatmapResult& result)
 {
+    std::lock_guard lock(mutex_);
+    publish_locked(engine, result);
+}
+
+void LiveStreamHub::publish(
+    LiveStreamSessionId session_id,
+    const LiveHeatmapEngine& engine,
+    const LiveHeatmapResult& result)
+{
+    std::lock_guard lock(mutex_);
+
+    if (!accepts_session(session_id))
+    {
+        return;
+    }
+
+    publish_locked(engine, result);
+}
+
+void LiveStreamHub::publish_locked(
+    const LiveHeatmapEngine& engine,
+    const LiveHeatmapResult& result)
+{
     if (!result.status_change && result.columns.empty())
     {
         return;
     }
 
-    std::lock_guard lock(mutex_);
     remove_expired_subscribers();
 
     for (const LiveHeatmapColumnUpdate& update : result.columns)
@@ -245,6 +307,30 @@ void LiveStreamHub::publish_source_status(
     std::chrono::milliseconds retry_delay)
 {
     std::lock_guard lock(mutex_);
+    publish_source_status_locked(status, detail, retry_delay);
+}
+
+void LiveStreamHub::publish_source_status(
+    LiveStreamSessionId session_id,
+    LiveSourceStatus status,
+    std::string_view detail,
+    std::chrono::milliseconds retry_delay)
+{
+    std::lock_guard lock(mutex_);
+
+    if (!accepts_session(session_id))
+    {
+        return;
+    }
+
+    publish_source_status_locked(status, detail, retry_delay);
+}
+
+void LiveStreamHub::publish_source_status_locked(
+    LiveSourceStatus status,
+    std::string_view detail,
+    std::chrono::milliseconds retry_delay)
+{
     remove_expired_subscribers();
     source_status_ = status;
     source_detail_ = detail;
@@ -265,6 +351,25 @@ void LiveStreamHub::publish_source_status(
 void LiveStreamHub::publish_error(std::string_view message)
 {
     std::lock_guard lock(mutex_);
+    publish_error_locked(message);
+}
+
+void LiveStreamHub::publish_error(
+    LiveStreamSessionId session_id,
+    std::string_view message)
+{
+    std::lock_guard lock(mutex_);
+
+    if (!accepts_session(session_id))
+    {
+        return;
+    }
+
+    publish_error_locked(message);
+}
+
+void LiveStreamHub::publish_error_locked(std::string_view message)
+{
     remove_expired_subscribers();
     error_message_ = protocol_error(message);
     enqueue_to_all(error_message_);
@@ -316,6 +421,10 @@ std::string LiveStreamHub::state_message() const
     );
     state["source_status"] = source_status_name(source_status_);
     state["book_status"] = book_status_name(book_status_);
+    if (!product_id_.empty())
+    {
+        state["product_id"] = product_id_;
+    }
     state["speed"] = 1;
     state["position"] = position_;
 
@@ -330,6 +439,15 @@ std::string LiveStreamHub::state_message() const
     }
 
     return json::serialize(state);
+}
+
+std::string LiveStreamHub::product_reset_message() const
+{
+    json::object reset;
+    reset["type"] = "reset";
+    reset["scope"] = "product";
+    reset["product_id"] = product_id_;
+    return json::serialize(reset);
 }
 
 std::vector<std::string> LiveStreamHub::snapshot_messages() const
@@ -375,6 +493,12 @@ std::vector<std::string> LiveStreamHub::pending_messages() const
 void LiveStreamHub::refresh_state_message()
 {
     state_message_ = state_message();
+}
+
+bool LiveStreamHub::accepts_session(
+    LiveStreamSessionId session_id) const noexcept
+{
+    return session_id == 0 || session_id == session_id_;
 }
 
 void LiveStreamHub::remove_expired_subscribers()
