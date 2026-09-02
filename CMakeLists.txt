@@ -26,6 +26,8 @@ add_library(orderbook_core
     src/live_heatmap_engine.cpp
     src/live_stream.cpp
     src/reconnect_backoff.cpp
+    src/market.cpp
+    src/viewer_config.cpp
 )
 
 target_include_directories(orderbook_core PUBLIC include)
@@ -101,6 +103,8 @@ if(BUILD_TESTING)
         tests/live_heatmap_engine_tests.cpp
         tests/live_stream_tests.cpp
         tests/live_source_tests.cpp
+        tests/market_tests.cpp
+        tests/viewer_config_tests.cpp
     )
 
     target_link_libraries(orderbook_tests PRIVATE
