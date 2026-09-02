@@ -5,6 +5,7 @@
 #include "order_book.hpp"
 
 #include <optional>
+#include <stdexcept>
 #include <string_view>
 
 enum class VenueSessionStatus
@@ -30,6 +31,12 @@ enum class TrustedBookEventType
     Snapshot,
     Update,
     Invalidated
+};
+
+class UnsupportedMarketError : public std::runtime_error
+{
+public:
+    using std::runtime_error::runtime_error;
 };
 
 struct TrustedBookEvent

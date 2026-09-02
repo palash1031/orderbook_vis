@@ -229,6 +229,26 @@ void LiveSourceRunner::run(LiveSourceStopCheck should_stop)
 
             return;
         }
+        catch (const UnsupportedMarketError& error)
+        {
+            if (should_stop())
+            {
+                return;
+            }
+
+            const std::string detail =
+                source_name_
+                + " market unsupported: "
+                + error.what();
+            hub_->publish_source_status(
+                session_id_,
+                LiveSourceStatus::Disconnected,
+                detail
+            );
+            hub_->publish_error(session_id_, detail);
+            std::cerr << detail << '\n';
+            return;
+        }
         catch (const std::exception& error)
         {
             if (should_stop())

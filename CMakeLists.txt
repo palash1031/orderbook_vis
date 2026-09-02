@@ -38,6 +38,7 @@ target_link_libraries(orderbook_core PUBLIC Boost::json)
 
 add_library(coinbase_transport
     src/coinbase_level2_stream.cpp
+    src/kraken_level2_stream.cpp
     src/live_source.cpp
 )
 
@@ -108,6 +109,7 @@ if(BUILD_TESTING)
         tests/market_tests.cpp
         tests/viewer_config_tests.cpp
         tests/kraken_adapter_tests.cpp
+        tests/kraken_stream_tests.cpp
     )
 
     target_link_libraries(orderbook_tests PRIVATE
