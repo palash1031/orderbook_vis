@@ -1,5 +1,7 @@
 #include "recorder_config.hpp"
 
+#include "market.hpp"
+
 #include <boost/json.hpp>
 
 #include <algorithm>
@@ -9,95 +11,9 @@
 
 namespace json = boost::json;
 
-namespace
-{
-bool is_ascii_space(char character)
-{
-    return character == ' '
-        || character == '\t'
-        || character == '\n'
-        || character == '\r'
-        || character == '\f'
-        || character == '\v';
-}
-
-bool is_ascii_alphanumeric(char character)
-{
-    return (character >= 'A' && character <= 'Z')
-        || (character >= '0' && character <= '9');
-}
-
-std::string_view trim_ascii_space(std::string_view text)
-{
-    while (!text.empty() && is_ascii_space(text.front()))
-    {
-        text.remove_prefix(1);
-    }
-
-    while (!text.empty() && is_ascii_space(text.back()))
-    {
-        text.remove_suffix(1);
-    }
-
-    return text;
-}
-}
-
 std::string normalize_product_id(std::string_view product_id)
 {
-    product_id = trim_ascii_space(product_id);
-
-    if (product_id.empty() || product_id.size() > 65)
-    {
-        throw std::invalid_argument(
-            "Product ID must be a BASE-QUOTE pair"
-        );
-    }
-
-    std::string normalized(product_id);
-    std::transform(
-        normalized.begin(),
-        normalized.end(),
-        normalized.begin(),
-        [](unsigned char character)
-        {
-            if (character >= 'a' && character <= 'z')
-            {
-                return static_cast<char>(character - 'a' + 'A');
-            }
-
-            return static_cast<char>(character);
-        }
-    );
-
-    const std::size_t separator = normalized.find('-');
-
-    if (
-        separator == std::string::npos
-        || separator == 0
-        || separator + 1 == normalized.size()
-        || normalized.find('-', separator + 1) != std::string::npos
-    )
-    {
-        throw std::invalid_argument(
-            "Product ID must be a BASE-QUOTE pair"
-        );
-    }
-
-    for (std::size_t index = 0; index < normalized.size(); ++index)
-    {
-        if (
-            index != separator
-            && !is_ascii_alphanumeric(normalized[index])
-        )
-        {
-            throw std::invalid_argument(
-                "Product ID may contain only letters, digits, and one hyphen"
-            );
-        }
-    }
-
-    return normalized;
+    return Product::parse(product_id).to_string();
 }
 
 std::string default_capture_path(std::string_view product_id)

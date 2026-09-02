@@ -86,6 +86,45 @@ LiveHeatmapResult LiveHeatmapEngine::process(std::string_view raw_message)
     return live_result;
 }
 
+LiveHeatmapResult LiveHeatmapEngine::process(const TrustedBookEvent& event)
+{
+    if (event.market.product.to_string() != product_id_)
+    {
+        throw std::invalid_argument(
+            "Trusted book product does not match configured product"
+        );
+    }
+
+    if (event.type == TrustedBookEventType::Invalidated)
+    {
+        return begin_recovery();
+    }
+
+    if (
+        event.type == TrustedBookEventType::Update
+        && status_ == LiveHeatmapStatus::WaitingForSnapshot
+    )
+    {
+        return {};
+    }
+
+    if (!event.book)
+    {
+        throw std::invalid_argument("Trusted book event has no book state");
+    }
+
+    LiveHeatmapResult result;
+
+    if (!heatmap_.sample(event.timestamp, *event.book))
+    {
+        return result;
+    }
+
+    set_status(LiveHeatmapStatus::Live, result);
+    collect_columns(result);
+    return result;
+}
+
 LiveHeatmapResult LiveHeatmapEngine::begin_recovery()
 {
     LiveHeatmapResult result;

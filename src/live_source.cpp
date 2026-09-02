@@ -63,7 +63,8 @@ LiveSourceRunner::LiveSourceRunner(
     std::shared_ptr<LiveStreamHub> hub,
     LiveMessageSourceFactory source_factory,
     ReconnectBackoffConfig backoff_config,
-    LiveSourceSleeper sleeper)
+    LiveSourceSleeper sleeper,
+    std::string_view source_name)
     : LiveSourceRunner(
           0,
           product_id,
@@ -71,7 +72,8 @@ LiveSourceRunner::LiveSourceRunner(
           std::move(hub),
           std::move(source_factory),
           backoff_config,
-          std::move(sleeper)
+          std::move(sleeper),
+          source_name
       )
 {
 }
@@ -83,14 +85,16 @@ LiveSourceRunner::LiveSourceRunner(
     std::shared_ptr<LiveStreamHub> hub,
     LiveMessageSourceFactory source_factory,
     ReconnectBackoffConfig backoff_config,
-    LiveSourceSleeper sleeper)
+    LiveSourceSleeper sleeper,
+    std::string_view source_name)
     : session_id_(session_id),
       product_id_(normalize_product_id(product_id)),
       engine_(product_id_, std::move(heatmap_config)),
       hub_(std::move(hub)),
       source_factory_(std::move(source_factory)),
       sleeper_(std::move(sleeper)),
-      backoff_(backoff_config)
+      backoff_(backoff_config),
+      source_name_(source_name)
 {
     if (!hub_ || !source_factory_)
     {
@@ -141,60 +145,109 @@ void LiveSourceRunner::run(LiveSourceStopCheck should_stop)
                 LiveSourceStatus::Connected
             );
             std::cout
-                << "Coinbase live source connected for "
+                << source_name_
+                << " live source connected for "
                 << product_id_
                 << '\n';
 
             while (!should_stop())
             {
-                const std::string message = source->read();
+                LiveHeatmapResult result;
 
-                if (should_stop())
+                if (auto* trusted = dynamic_cast<TrustedLiveMessageSource*>(
+                        source.get()
+                    ))
                 {
-                    return;
-                }
+                    const TrustedBookEvent event = trusted->read_event();
 
-                if (const auto error = coinbase_error_message(message))
-                {
-                    hub_->publish_source_status(
-                        session_id_,
-                        LiveSourceStatus::Disconnected,
-                        *error
-                    );
-                    hub_->publish_error(session_id_, *error);
-                    std::cerr
-                        << "Coinbase subscription error: "
-                        << *error
-                        << '\n';
-                    return;
-                }
-
-                try
-                {
-                    const LiveHeatmapResult result = engine_.process(message);
-                    hub_->publish(session_id_, engine_, result);
-
-                    if (engine_.status() == LiveHeatmapStatus::Live)
+                    if (should_stop())
                     {
-                        backoff_.reset();
+                        return;
                     }
 
-                    if (engine_.status() == LiveHeatmapStatus::Gap)
+                    result = engine_.process(event);
+                    hub_->publish(session_id_, engine_, result);
+
+                    if (event.type == TrustedBookEventType::Invalidated)
                     {
                         throw std::runtime_error(
-                            "Coinbase Level 2 sequence gap detected"
+                            "trusted order book invalidated"
                         );
                     }
                 }
-                catch (const std::invalid_argument& error)
+                else
                 {
-                    std::cerr
-                        << "Coinbase live message ignored: "
-                        << error.what()
-                        << '\n';
+                    try
+                    {
+                        const std::string message = source->read();
+
+                        if (should_stop())
+                        {
+                            return;
+                        }
+
+                        if (const auto error = coinbase_error_message(message))
+                        {
+                            hub_->publish_source_status(
+                                session_id_,
+                                LiveSourceStatus::Disconnected,
+                                *error
+                            );
+                            hub_->publish_error(session_id_, *error);
+                            std::cerr
+                                << "Coinbase subscription error: "
+                                << *error
+                                << '\n';
+                            return;
+                        }
+
+                        result = engine_.process(message);
+                        hub_->publish(session_id_, engine_, result);
+                    }
+                    catch (const std::invalid_argument& error)
+                    {
+                        std::cerr
+                            << source_name_
+                            << " live message ignored: "
+                            << error.what()
+                            << '\n';
+                        continue;
+                    }
+                }
+
+                if (engine_.status() == LiveHeatmapStatus::Live)
+                {
+                    backoff_.reset();
+                }
+
+                if (engine_.status() == LiveHeatmapStatus::Gap)
+                {
+                    throw std::runtime_error(
+                        "Coinbase Level 2 sequence gap detected"
+                    );
                 }
             }
 
+            return;
+        }
+        catch (const UnsupportedMarketError& error)
+        {
+            if (should_stop())
+            {
+                return;
+            }
+
+            const std::string detail =
+                source_name_
+                + " market unsupported: "
+                + error.what();
+            hub_->publish_source_status(
+                session_id_,
+                LiveSourceStatus::Disconnected,
+                detail
+            );
+            hub_->publish_error(session_id_, detail);
+            std::cerr << detail << '\n';
             return;
         }
         catch (const std::exception& error)
@@ -205,7 +258,8 @@ void LiveSourceRunner::run(LiveSourceStopCheck should_stop)
             }
 
             const std::string detail =
-                std::string("Coinbase live source disconnected: ")
+                source_name_
+                + " live source disconnected: "
                 + error.what();
             hub_->publish_source_status(
                 session_id_,
@@ -240,7 +294,7 @@ void LiveSourceRunner::run(LiveSourceStopCheck should_stop)
             hub_->publish_source_status(
                 session_id_,
                 LiveSourceStatus::Reconnecting,
-                "Opening a new Coinbase connection"
+                "Opening a new " + source_name_ + " connection"
             );
         }
     }
@@ -252,12 +306,14 @@ LiveMarketService::LiveMarketService(
     std::shared_ptr<LiveStreamHub> hub,
     LiveProductSourceFactory source_factory,
     ReconnectBackoffConfig backoff_config,
-    LiveSourceSleeper sleeper)
+    LiveSourceSleeper sleeper,
+    std::string_view source_name)
     : heatmap_config_(std::move(heatmap_config)),
       hub_(std::move(hub)),
       source_factory_(std::move(source_factory)),
       backoff_config_(backoff_config),
-      sleeper_(std::move(sleeper))
+      sleeper_(std::move(sleeper)),
+      source_name_(source_name)
 {
     if (!hub_ || !source_factory_)
     {
@@ -301,7 +357,8 @@ void LiveMarketService::run(LiveSourceStopCheck should_stop)
                 return source_factory_(product_id);
             },
             backoff_config_,
-            sleeper_
+            sleeper_,
+            source_name_
         );
         runner.run([this, should_stop, session_id = selected.session_id]
         {

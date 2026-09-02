@@ -1,9 +1,10 @@
 #include "coinbase_level2_stream.hpp"
+#include "kraken_level2_stream.hpp"
 #include "live_source.hpp"
 #include "live_stream.hpp"
-#include "recorder_config.hpp"
 #include "replay_config.hpp"
 #include "replay_stream.hpp"
+#include "viewer_config.hpp"
 
 #include <boost/asio.hpp>
 #include <boost/beast.hpp>
@@ -12,7 +13,6 @@
 #include <boost/json.hpp>
 
 #include <algorithm>
-#include <charconv>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -26,6 +26,7 @@
 #include <string_view>
 #include <thread>
 #include <utility>
+#include <vector>
 
 namespace asio = boost::asio;
 namespace beast = boost::beast;
@@ -41,16 +42,6 @@ using tcp = asio::ip::tcp;
 
 namespace
 {
-struct ViewerOptions
-{
-    std::filesystem::path heatmap_path = "heatmap.json";
-    std::filesystem::path web_root = ORDERBOOK_WEB_ROOT;
-    std::string product_id = "BTC-USD";
-    HeatmapConfig live_heatmap_config;
-    std::uint16_t port = 8080;
-    bool live = false;
-};
-
 struct ViewerAssets
 {
     std::string index;
@@ -65,6 +56,7 @@ struct ServerState
     std::shared_ptr<LiveStreamHub> live;
     std::shared_ptr<LiveMarketService> live_service;
     std::string metadata;
+    Venue venue = Venue::Coinbase;
     bool live_mode = false;
 };
 
@@ -79,133 +71,9 @@ void print_usage(const char* executable)
     std::cout
         << "Usage: "
         << executable
-        << " [--heatmap heatmap.json | --live [--product BTC-USD]"
+        << " [--heatmap heatmap.json | --live"
+        << " [--venue coinbase|kraken] [--product BTC-USD]"
         << " [--price-bin auto|SIZE]] [--port 8080] [--web-root web]\n";
-}
-
-std::uint16_t parse_port(std::string_view text)
-{
-    unsigned int value = 0;
-    const auto [end, error] = std::from_chars(
-        text.data(),
-        text.data() + text.size(),
-        value
-    );
-
-    if (
-        error != std::errc{}
-        || end != text.data() + text.size()
-        || value == 0
-        || value > 65'535
-    )
-    {
-        throw std::invalid_argument("Viewer port must be between 1 and 65535");
-    }
-
-    return static_cast<std::uint16_t>(value);
-}
-
-std::optional<ViewerOptions> parse_options(int argc, char* argv[])
-{
-    ViewerOptions options;
-    bool heatmap_set = false;
-    bool product_set = false;
-    bool price_bin_set = false;
-
-    for (int index = 1; index < argc; ++index)
-    {
-        const std::string argument = argv[index];
-
-        if (argument == "--help" || argument == "-h")
-        {
-            print_usage(argv[0]);
-            return std::nullopt;
-        }
-
-        if (argument == "--live")
-        {
-            if (options.live)
-            {
-                throw std::invalid_argument("--live may be specified once");
-            }
-
-            options.live = true;
-            continue;
-        }
-
-        if (index + 1 >= argc)
-        {
-            throw std::invalid_argument("Missing value for " + argument);
-        }
-
-        const std::string value = argv[++index];
-
-        if (argument == "--heatmap")
-        {
-            if (heatmap_set)
-            {
-                throw std::invalid_argument(
-                    "--heatmap may be specified once"
-                );
-            }
-
-            options.heatmap_path = value;
-            heatmap_set = true;
-        }
-        else if (argument == "--port")
-        {
-            options.port = parse_port(value);
-        }
-        else if (argument == "--web-root")
-        {
-            options.web_root = value;
-        }
-        else if (argument == "--product")
-        {
-            if (product_set)
-            {
-                throw std::invalid_argument(
-                    "--product may be specified once"
-                );
-            }
-
-            options.product_id = normalize_product_id(value);
-            product_set = true;
-        }
-        else if (argument == "--price-bin")
-        {
-            if (price_bin_set)
-            {
-                throw std::invalid_argument(
-                    "--price-bin may be specified once"
-                );
-            }
-
-            options.live_heatmap_config.price_bin_size =
-                parse_price_bin_argument(value);
-            price_bin_set = true;
-        }
-        else
-        {
-            throw std::invalid_argument("Unknown viewer option: " + argument);
-        }
-    }
-
-    if (options.live && heatmap_set)
-    {
-        throw std::invalid_argument(
-            "--live and --heatmap select different stream sources"
-        );
-    }
-
-    if (!options.live && (product_set || price_bin_set))
-    {
-        throw std::invalid_argument(
-            "--product and --price-bin require --live"
-        );
-    }
-
-    return options;
 }
 
 std::string read_file(const std::filesystem::path& path)
@@ -237,6 +105,7 @@ std::shared_ptr<ServerState> load_state(const ViewerOptions& options)
         read_file(options.web_root / "app.js")
     };
     state->live_mode = options.live;
+    state->venue = options.venue;
 
     if (options.live)
     {
@@ -245,10 +114,19 @@ std::shared_ptr<ServerState> load_state(const ViewerOptions& options)
             options.product_id,
             options.live_heatmap_config,
             state->live,
-            [](std::string_view product_id)
+            [venue = options.venue](std::string_view product_id)
+                -> std::unique_ptr<LiveMessageSource>
             {
+                if (venue == Venue::Kraken)
+                {
+                    return std::make_unique<KrakenLevel2Stream>(product_id);
+                }
+
                 return std::make_unique<CoinbaseLevel2Stream>(product_id);
-            }
+            },
+            ReconnectBackoffConfig{},
+            LiveSourceSleeper{},
+            venue_name(options.venue)
         );
     }
     else
@@ -328,6 +206,7 @@ http::response<http::string_body> make_response(
         if (state.live_mode)
         {
             health["product_id"] = state.live_service->product_id();
+            health["venue"] = venue_name(state.venue);
         }
         response.body() = json::serialize(health);
     }
@@ -339,6 +218,7 @@ http::response<http::string_body> make_response(
         metadata["type"] = "metadata";
         metadata["stream_mode"] = "live";
         metadata["product_id"] = state.live_service->product_id();
+        metadata["venue"] = venue_name(state.venue);
         response.body() = json::serialize(metadata);
     }
     else
@@ -736,16 +616,28 @@ int main(int argc, char* argv[])
 {
     try
     {
-        const std::optional<ViewerOptions> options = parse_options(argc, argv);
+        std::vector<std::string_view> arguments;
+        arguments.reserve(static_cast<std::size_t>(argc - 1));
 
-        if (!options)
+        for (int index = 1; index < argc; ++index)
         {
+            arguments.emplace_back(argv[index]);
+        }
+
+        const ViewerOptions options = parse_viewer_options(
+            arguments,
+            ORDERBOOK_WEB_ROOT
+        );
+
+        if (options.show_help)
+        {
+            print_usage(argv[0]);
             return 0;
         }
 
-        const std::shared_ptr<const ServerState> state = load_state(*options);
+        const std::shared_ptr<const ServerState> state = load_state(options);
 
-        if (options->live)
+        if (options.live)
         {
             std::thread(
                 run_live_source,
@@ -753,7 +645,7 @@ int main(int argc, char* argv[])
             ).detach();
         }
 
-        serve(*options, state);
+        serve(options, state);
     }
     catch (const std::exception& error)
     {

@@ -1,9 +1,13 @@
 #include "live_heatmap_engine.hpp"
+#include "venue_adapter.hpp"
 
 #include <boost/json.hpp>
 #include <gtest/gtest.h>
 
+#include <chrono>
+#include <optional>
 #include <string>
+#include <utility>
 
 namespace json = boost::json;
 
@@ -48,6 +52,28 @@ std::string snapshot(
         sequence,
         timestamp
     );
+}
+
+OrderBook trusted_book(double bid_quantity = 1.5)
+{
+    OrderBook book;
+    book.apply_update(BookSide::Bid, 4.50, bid_quantity);
+    book.apply_update(BookSide::Offer, 4.52, 2.5);
+    return book;
+}
+
+TrustedBookEvent trusted_event(
+    TrustedBookEventType type,
+    std::optional<OrderBook> book,
+    Product product = Product("UNI", "USD"),
+    std::chrono::nanoseconds timestamp = std::chrono::nanoseconds{1})
+{
+    return {
+        type,
+        {Venue::Kraken, std::move(product)},
+        MarketTimestamp{timestamp},
+        std::move(book)
+    };
 }
 }
 
@@ -205,4 +231,86 @@ TEST(LiveHeatmapEngineTest, RejectsUnexpectedProduct)
     LiveHeatmapEngine engine("SOL-USD");
 
     EXPECT_THROW(engine.process(snapshot()), std::invalid_argument);
+}
+
+TEST(LiveHeatmapEngineTest, BuildsHeatmapFromTrustedCanonicalSnapshot)
+{
+    LiveHeatmapEngine engine("UNI-USD");
+
+    const LiveHeatmapResult result = engine.process(trusted_event(
+        TrustedBookEventType::Snapshot,
+        trusted_book()
+    ));
+
+    EXPECT_EQ(engine.status(), LiveHeatmapStatus::Live);
+    ASSERT_TRUE(result.status_change.has_value());
+    EXPECT_EQ(*result.status_change, LiveHeatmapStatus::Live);
+    ASSERT_EQ(result.columns.size(), 1U);
+    EXPECT_EQ(result.columns.front().index, 0U);
+}
+
+TEST(LiveHeatmapEngineTest, IgnoresTrustedUpdateBeforeSnapshot)
+{
+    LiveHeatmapEngine engine("UNI-USD");
+
+    const LiveHeatmapResult result = engine.process(trusted_event(
+        TrustedBookEventType::Update,
+        trusted_book(9.0)
+    ));
+
+    EXPECT_TRUE(result.columns.empty());
+    EXPECT_EQ(engine.status(), LiveHeatmapStatus::WaitingForSnapshot);
+}
+
+TEST(LiveHeatmapEngineTest, TrustedInvalidationRequiresFreshSnapshot)
+{
+    LiveHeatmapEngine engine("UNI-USD");
+    engine.process(trusted_event(
+        TrustedBookEventType::Snapshot,
+        trusted_book()
+    ));
+
+    const LiveHeatmapResult invalidated = engine.process(trusted_event(
+        TrustedBookEventType::Invalidated,
+        std::nullopt,
+        Product("UNI", "USD"),
+        std::chrono::nanoseconds{2}
+    ));
+    ASSERT_TRUE(invalidated.status_change.has_value());
+    EXPECT_EQ(
+        *invalidated.status_change,
+        LiveHeatmapStatus::WaitingForSnapshot
+    );
+
+    const LiveHeatmapResult ignored = engine.process(trusted_event(
+        TrustedBookEventType::Update,
+        trusted_book(9.0),
+        Product("UNI", "USD"),
+        std::chrono::nanoseconds{3}
+    ));
+    EXPECT_TRUE(ignored.columns.empty());
+
+    const LiveHeatmapResult recovered = engine.process(trusted_event(
+        TrustedBookEventType::Snapshot,
+        trusted_book(2.0),
+        Product("UNI", "USD"),
+        std::chrono::nanoseconds{4}
+    ));
+    ASSERT_TRUE(recovered.status_change.has_value());
+    EXPECT_EQ(*recovered.status_change, LiveHeatmapStatus::Live);
+    EXPECT_EQ(engine.status(), LiveHeatmapStatus::Live);
+}
+
+TEST(LiveHeatmapEngineTest, RejectsTrustedEventForDifferentProduct)
+{
+    LiveHeatmapEngine engine("UNI-USD");
+
+    EXPECT_THROW(
+        engine.process(trusted_event(
+            TrustedBookEventType::Snapshot,
+            trusted_book(),
+            Product("ATOM", "USD")
+        )),
+        std::invalid_argument
+    );
 }

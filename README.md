@@ -1,7 +1,7 @@
 # Order Book Heatmap
 
-A C++20 Coinbase Level 2 recorder, order-book reconstructor, and browser-based
-live/replay liquidity heatmap viewer.
+A C++20 Coinbase/Kraken Level 2 market-data engine, order-book reconstructor,
+and browser-based live/replay liquidity heatmap viewer.
 
 ## Build
 
@@ -39,6 +39,31 @@ Start the loopback-only viewer with a Coinbase product and open
 ./build/heatmap_viewer --live --product SOL-USD
 ./build/heatmap_viewer --live --product DOGE-USD --price-bin 0.0001
 ```
+
+To run the checksum-validated Kraken v2 vertical slice on canonical
+`UNI-USD`:
+
+```sh
+./build/heatmap_viewer --live --venue kraken --product UNI-USD
+```
+
+The Kraken connection first requests the venue's live instrument catalog and
+resolves canonical `UNI-USD` to the native symbol currently advertised by
+Kraken (normally `UNI/USD`). The listing is not hardcoded: a missing or
+non-online pair is reported as unsupported and is not retried as though it were
+a temporary network failure.
+
+After discovery, the same WebSocket session subscribes to one Level 2 book at
+depth 500. Kraken price and quantity tokens remain exact through reconstruction;
+each complete snapshot or update batch is applied in venue order, truncated to
+the subscribed depth, and checked with Kraken's top-ten CRC32 procedure before
+the common heatmap sees it. A checksum or protocol failure invalidates the book,
+opens a fresh session through exponential backoff, repeats discovery, and
+ignores updates until a new checksum-valid snapshot establishes trust.
+
+The heatmap visualizes observed resting depth. It is not a promise that the
+displayed quantity can be filled at those prices; latency, cancellations, queue
+position, fees, and exchange matching behavior still matter.
 
 `BTC-USD` and automatic product-aware price bins remain the defaults. The C++
 process connects to Coinbase, validates message sequence, reconstructs the Level
@@ -103,6 +128,14 @@ of the dashboard assets.
 
 ```sh
 ctest --test-dir build --output-on-failure
+```
+
+The deterministic suite uses scripted Kraken frames and skips public-network
+access. To opt into a real Kraken `UNI/USD` snapshot proof:
+
+```sh
+ORDERBOOK_RUN_KRAKEN_LIVE_TESTS=1 \
+  ctest --test-dir build --output-on-failure -R KrakenLiveSmokeTest
 ```
 
 ## Benchmarks

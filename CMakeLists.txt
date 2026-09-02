@@ -26,6 +26,10 @@ add_library(orderbook_core
     src/live_heatmap_engine.cpp
     src/live_stream.cpp
     src/reconnect_backoff.cpp
+    src/market.cpp
+    src/viewer_config.cpp
+    src/live_message_source.cpp
+    src/kraken_adapter.cpp
 )
 
 target_include_directories(orderbook_core PUBLIC include)
@@ -34,6 +38,7 @@ target_link_libraries(orderbook_core PUBLIC Boost::json)
 
 add_library(coinbase_transport
     src/coinbase_level2_stream.cpp
+    src/kraken_level2_stream.cpp
     src/live_source.cpp
 )
 
@@ -101,6 +106,10 @@ if(BUILD_TESTING)
         tests/live_heatmap_engine_tests.cpp
         tests/live_stream_tests.cpp
         tests/live_source_tests.cpp
+        tests/market_tests.cpp
+        tests/viewer_config_tests.cpp
+        tests/kraken_adapter_tests.cpp
+        tests/kraken_stream_tests.cpp
     )
 
     target_link_libraries(orderbook_tests PRIVATE

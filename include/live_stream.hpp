@@ -1,6 +1,7 @@
 #pragma once
 
 #include "live_heatmap_engine.hpp"
+#include "venue_adapter.hpp"
 
 #include <chrono>
 #include <condition_variable>
@@ -14,13 +15,7 @@
 #include <string_view>
 #include <vector>
 
-enum class LiveSourceStatus
-{
-    Connecting,
-    Connected,
-    Disconnected,
-    Reconnecting
-};
+using LiveSourceStatus = VenueSessionStatus;
 
 using LiveStreamSessionId = std::uint64_t;
 
