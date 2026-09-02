@@ -152,32 +152,32 @@ void LiveSourceRunner::run(LiveSourceStopCheck should_stop)
 
             while (!should_stop())
             {
-                try
+                LiveHeatmapResult result;
+
+                if (auto* trusted = dynamic_cast<TrustedLiveMessageSource*>(
+                        source.get()
+                    ))
                 {
-                    LiveHeatmapResult result;
+                    const TrustedBookEvent event = trusted->read_event();
 
-                    if (auto* trusted = dynamic_cast<TrustedLiveMessageSource*>(
-                            source.get()
-                        ))
+                    if (should_stop())
                     {
-                        const TrustedBookEvent event = trusted->read_event();
-
-                        if (should_stop())
-                        {
-                            return;
-                        }
-
-                        result = engine_.process(event);
-                        hub_->publish(session_id_, engine_, result);
-
-                        if (event.type == TrustedBookEventType::Invalidated)
-                        {
-                            throw std::runtime_error(
-                                "trusted order book invalidated"
-                            );
-                        }
+                        return;
                     }
-                    else
+
+                    result = engine_.process(event);
+                    hub_->publish(session_id_, engine_, result);
+
+                    if (event.type == TrustedBookEventType::Invalidated)
+                    {
+                        throw std::runtime_error(
+                            "trusted order book invalidated"
+                        );
+                    }
+                }
+                else
+                {
+                    try
                     {
                         const std::string message = source->read();
 
@@ -204,26 +204,27 @@ void LiveSourceRunner::run(LiveSourceStopCheck should_stop)
                         result = engine_.process(message);
                         hub_->publish(session_id_, engine_, result);
                     }
-
-                    if (engine_.status() == LiveHeatmapStatus::Live)
+                    catch (const std::invalid_argument& error)
                     {
-                        backoff_.reset();
-                    }
-
-                    if (engine_.status() == LiveHeatmapStatus::Gap)
-                    {
-                        throw std::runtime_error(
-                            "Coinbase Level 2 sequence gap detected"
-                        );
+                        std::cerr
+                            << source_name_
+                            << " live message ignored: "
+                            << error.what()
+                            << '\n';
+                        continue;
                     }
                 }
-                catch (const std::invalid_argument& error)
+
+                if (engine_.status() == LiveHeatmapStatus::Live)
                 {
-                    std::cerr
-                        << source_name_
-                        << " live message ignored: "
-                        << error.what()
-                        << '\n';
+                    backoff_.reset();
+                }
+
+                if (engine_.status() == LiveHeatmapStatus::Gap)
+                {
+                    throw std::runtime_error(
+                        "Coinbase Level 2 sequence gap detected"
+                    );
                 }
             }
 

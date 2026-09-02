@@ -74,6 +74,12 @@ constexpr std::string_view rejected_book_ack = R"({
   "result":{"channel":"book"}
 })";
 
+constexpr std::string_view transient_book_rejection = R"({
+  "method":"subscribe","success":false,
+  "error":"Service temporarily unavailable",
+  "result":{"channel":"book"}
+})";
+
 constexpr std::string_view uni_snapshot = R"({
   "channel":"book","type":"snapshot","data":[{
     "symbol":"UNI/USD",
@@ -326,7 +332,7 @@ TEST(KrakenLevel2StreamTest, SurfacesBookSubscriptionRejection)
         static_cast<void>(stream.read_event());
         FAIL() << "Expected the Kraken subscription rejection";
     }
-    catch (const std::runtime_error& error)
+    catch (const UnsupportedMarketError& error)
     {
         EXPECT_NE(
             std::string(error.what()).find("Currency pair not supported"),
@@ -352,6 +358,36 @@ TEST(KrakenLevel2StreamTest, RejectsInstrumentSubscriptionFailure)
         std::runtime_error
     );
     EXPECT_EQ(state->writes.size(), 1U);
+}
+
+TEST(KrakenLevel2StreamTest, KeepsTransientBookRejectionRetryable)
+{
+    const auto state = wire_state({
+        online_instrument_snapshot,
+        transient_book_rejection
+    });
+    KrakenLevel2Stream stream(
+        Product("UNI", "USD"),
+        500,
+        scripted_wire(state)
+    );
+
+    try
+    {
+        static_cast<void>(stream.read_event());
+        FAIL() << "Expected the transient Kraken subscription failure";
+    }
+    catch (const UnsupportedMarketError& error)
+    {
+        FAIL() << "Transient failure was marked unsupported: " << error.what();
+    }
+    catch (const std::runtime_error& error)
+    {
+        EXPECT_NE(
+            std::string(error.what()).find("temporarily unavailable"),
+            std::string::npos
+        );
+    }
 }
 
 TEST(KrakenLevel2StreamTest, RejectsUnsupportedDepthBeforeWriting)
@@ -500,8 +536,14 @@ TEST(KrakenLevel2StreamTest, UnsupportedMarketDoesNotRetry)
         [&]() -> std::unique_ptr<LiveMessageSource>
         {
             ++attempts;
-            throw UnsupportedMarketError(
-                "Kraken does not currently support UNI-USD"
+            const auto state = wire_state({
+                online_instrument_snapshot,
+                rejected_book_ack
+            });
+            return std::make_unique<KrakenLevel2Stream>(
+                Product("UNI", "USD"),
+                500,
+                scripted_wire(state)
             );
         },
         ReconnectBackoffConfig{
@@ -543,7 +585,7 @@ TEST(KrakenLevel2StreamTest, UnsupportedMarketDoesNotRetry)
         else if (type == "error")
         {
             saw_error = payload.at("message").as_string().find(
-                "does not currently support"
+                "not supported"
             ) != boost::json::string::npos;
         }
     }
@@ -555,7 +597,9 @@ TEST(KrakenLevel2StreamTest, UnsupportedMarketDoesNotRetry)
 
 TEST(KrakenLiveSmokeTest, ReceivesTrustedUniSnapshot)
 {
-    if (std::getenv("ORDERBOOK_RUN_KRAKEN_LIVE_TESTS") == nullptr)
+    const char* enabled = std::getenv("ORDERBOOK_RUN_KRAKEN_LIVE_TESTS");
+
+    if (enabled == nullptr || std::string_view(enabled) != "1")
     {
         GTEST_SKIP() << "set ORDERBOOK_RUN_KRAKEN_LIVE_TESTS=1";
     }

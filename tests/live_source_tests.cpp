@@ -415,6 +415,57 @@ TEST(LiveSourceRunnerTest, PublishesTrustedVenueEventsWithoutCoinbaseParsing)
     EXPECT_TRUE(published_column);
 }
 
+TEST(LiveSourceRunnerTest, TrustedInvariantFailureForcesReconnect)
+{
+    auto hub = std::make_shared<LiveStreamHub>();
+    bool stop = false;
+    std::size_t attempts = 0;
+    std::vector<std::chrono::milliseconds> sleeps;
+    LiveSourceRunner runner(
+        "UNI-USD",
+        {},
+        hub,
+        [&]() -> std::unique_ptr<LiveMessageSource>
+        {
+            ++attempts;
+            TrustedBookEvent event = trusted_uni_snapshot();
+
+            if (attempts == 1)
+            {
+                event.market.product = Product("ETH", "USD");
+            }
+
+            return std::make_unique<ScriptedTrustedSource>(
+                std::vector<TrustedBookEvent>{std::move(event)},
+                [&stop]
+                {
+                    stop = true;
+                }
+            );
+        },
+        ReconnectBackoffConfig{
+            std::chrono::milliseconds{5},
+            std::chrono::milliseconds{20},
+            0.0
+        },
+        [&sleeps](std::chrono::milliseconds delay)
+        {
+            sleeps.push_back(delay);
+        },
+        "Kraken"
+    );
+
+    runner.run([&stop]
+    {
+        return stop;
+    });
+
+    EXPECT_EQ(attempts, 2U);
+    EXPECT_EQ(sleeps, (std::vector<std::chrono::milliseconds>{
+        std::chrono::milliseconds{5}
+    }));
+}
+
 TEST(LiveMarketServiceTest, NormalizesAndValidatesSwitchControls)
 {
     auto hub = std::make_shared<LiveStreamHub>();

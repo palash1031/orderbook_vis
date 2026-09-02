@@ -4,11 +4,9 @@
 #include <boost/crc.hpp>
 
 #include <algorithm>
-#include <cerrno>
 #include <cctype>
 #include <chrono>
 #include <cmath>
-#include <cstdlib>
 #include <cstdint>
 #include <iterator>
 #include <limits>
@@ -121,8 +119,8 @@ MarketTimestamp parse_timestamp(const json::value& value)
 
 struct ParsedDecimal
 {
-    double value;
     std::string text;
+    bool zero;
 };
 
 ParsedDecimal parse_decimal(std::string text, bool allow_zero)
@@ -134,12 +132,14 @@ ParsedDecimal parse_decimal(std::string text, bool allow_zero)
 
     bool saw_digit = false;
     bool saw_point = false;
+    bool saw_nonzero_digit = false;
 
     for (const char character : text)
     {
         if (character >= '0' && character <= '9')
         {
             saw_digit = true;
+            saw_nonzero_digit = saw_nonzero_digit || character != '0';
         }
         else if (character == '.' && !saw_point)
         {
@@ -156,22 +156,37 @@ ParsedDecimal parse_decimal(std::string text, bool allow_zero)
         throw std::invalid_argument("Malformed Kraken book decimal");
     }
 
-    char* end = nullptr;
-    errno = 0;
-    const double numeric = std::strtod(text.c_str(), &end);
-
-    if (
-        end != text.c_str() + text.size()
-        || errno == ERANGE
-        || !std::isfinite(numeric)
-        || numeric < 0.0
-        || (!allow_zero && numeric == 0.0)
-    )
+    if (!allow_zero && !saw_nonzero_digit)
     {
         throw std::invalid_argument("Invalid Kraken book decimal");
     }
 
-    return {numeric, std::move(text)};
+    return {std::move(text), !saw_nonzero_digit};
+}
+
+double visualization_decimal(std::string_view text)
+{
+    double value = 0.0;
+
+    try
+    {
+        value = json::value_to<double>(json::parse(text));
+    }
+    catch (const std::exception&)
+    {
+        throw std::invalid_argument(
+            "Kraken book decimal cannot be visualized"
+        );
+    }
+
+    if (!std::isfinite(value))
+    {
+        throw std::invalid_argument(
+            "Kraken book decimal cannot be visualized"
+        );
+    }
+
+    return value;
 }
 
 std::string canonical_decimal(std::string_view decimal)
@@ -793,7 +808,8 @@ std::optional<TrustedBookEvent> KrakenBookAdapter::process(
         const auto apply = [](
             const json::array& parsed_updates,
             std::string_view raw_array,
-            Levels& levels)
+            Levels& levels,
+            bool allow_deletion)
         {
             const std::vector<std::string_view> raw_updates =
                 split_object_array(raw_array);
@@ -818,15 +834,20 @@ std::optional<TrustedBookEvent> KrakenBookAdapter::process(
                 );
                 const std::string price_key = canonical_decimal(price.text);
 
-                if (quantity.value == 0.0)
+                if (quantity.zero)
                 {
+                    if (!allow_deletion)
+                    {
+                        throw std::invalid_argument(
+                            "Kraken snapshot quantity must be positive"
+                        );
+                    }
+
                     levels.erase(price_key);
                 }
                 else
                 {
                     levels[price_key] = {
-                        price.value,
-                        quantity.value,
                         std::move(price.text),
                         std::move(quantity.text)
                     };
@@ -837,12 +858,14 @@ std::optional<TrustedBookEvent> KrakenBookAdapter::process(
         apply(
             payload.at("asks").as_array(),
             find_member_array(raw_message, "asks"),
-            next_asks
+            next_asks,
+            type == "update"
         );
         apply(
             payload.at("bids").as_array(),
             find_member_array(raw_message, "bids"),
-            next_bids
+            next_bids,
+            type == "update"
         );
 
         if (type == "snapshot" && (next_asks.empty() || next_bids.empty()))
@@ -865,6 +888,7 @@ std::optional<TrustedBookEvent> KrakenBookAdapter::process(
         const MarketTimestamp timestamp = parse_timestamp(
             payload.at("timestamp")
         );
+        OrderBook book = numeric_book_for(next_bids, next_asks);
         bids_ = std::move(next_bids);
         asks_ = std::move(next_asks);
         last_timestamp_ = timestamp;
@@ -875,7 +899,7 @@ std::optional<TrustedBookEvent> KrakenBookAdapter::process(
                 : TrustedBookEventType::Update,
             {Venue::Kraken, product_},
             timestamp,
-            numeric_book()
+            std::move(book)
         };
     }
     catch (const std::exception&)
@@ -965,20 +989,30 @@ TrustedBookEvent KrakenBookAdapter::invalidation() noexcept
     };
 }
 
-OrderBook KrakenBookAdapter::numeric_book() const
+OrderBook KrakenBookAdapter::numeric_book_for(
+    const Levels& bids,
+    const Levels& asks)
 {
     OrderBook book;
 
-    for (const auto& [price, level] : bids_)
+    for (const auto& [price, level] : bids)
     {
         static_cast<void>(price);
-        book.apply_update(BookSide::Bid, level.price, level.quantity);
+        book.apply_update(
+            BookSide::Bid,
+            visualization_decimal(level.price_text),
+            visualization_decimal(level.quantity_text)
+        );
     }
 
-    for (const auto& [price, level] : asks_)
+    for (const auto& [price, level] : asks)
     {
         static_cast<void>(price);
-        book.apply_update(BookSide::Offer, level.price, level.quantity);
+        book.apply_update(
+            BookSide::Offer,
+            visualization_decimal(level.price_text),
+            visualization_decimal(level.quantity_text)
+        );
     }
 
     return book;

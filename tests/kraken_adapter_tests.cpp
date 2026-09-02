@@ -302,6 +302,27 @@ TEST(KrakenBookAdapterTest, InvalidatesMalformedNonFiniteAndNegativeLevels)
     }
 }
 
+TEST(KrakenBookAdapterTest, RejectsZeroQuantitySnapshotLevels)
+{
+    KrakenBookAdapter adapter(Product("UNI", "USD"), "UNI/USD", 10);
+    const auto event = adapter.process(R"({
+      "channel":"book","type":"snapshot","data":[{
+        "symbol":"UNI/USD",
+        "asks":[
+          {"price":"4.51","qty":"1"},
+          {"price":"4.52","qty":"0"}
+        ],
+        "bids":[{"price":"4.50","qty":"1"}],
+        "checksum":518533985,
+        "timestamp":"2026-09-02T12:00:00Z"
+      }]
+    })");
+
+    ASSERT_TRUE(event.has_value());
+    EXPECT_EQ(event->type, TrustedBookEventType::Invalidated);
+    EXPECT_EQ(adapter.status(), VenueMarketStatus::Stale);
+}
+
 TEST(KrakenBookAdapterTest, PreservesUnquotedWireDecimalsForChecksum)
 {
     KrakenBookAdapter adapter(Product("UNI", "USD"), "UNI/USD", 500);

@@ -103,6 +103,36 @@ bool is_subscription_acknowledgement(const json::object& message)
         && method->as_string() == "subscribe";
 }
 
+std::string ascii_lowercase(std::string_view text)
+{
+    std::string normalized;
+    normalized.reserve(text.size());
+
+    for (const char character : text)
+    {
+        if (character >= 'A' && character <= 'Z')
+        {
+            normalized.push_back(
+                static_cast<char>(character - 'A' + 'a')
+            );
+        }
+        else
+        {
+            normalized.push_back(character);
+        }
+    }
+
+    return normalized;
+}
+
+bool is_permanent_market_rejection(std::string_view error)
+{
+    const std::string normalized = ascii_lowercase(error);
+    return normalized.find("pair not supported") != std::string::npos
+        || normalized.find("symbol not supported") != std::string::npos
+        || normalized.find("unknown symbol") != std::string::npos;
+}
+
 void validate_subscription_acknowledgement(
     const json::object& message,
     std::string_view expected_channel)
@@ -131,6 +161,7 @@ void validate_subscription_acknowledgement(
     std::string detail = "Kraken ";
     detail += expected_channel;
     detail += " subscription rejected";
+    std::string rejection_reason;
 
     if (const auto* error = message.if_contains("error"))
     {
@@ -142,7 +173,14 @@ void validate_subscription_acknowledgement(
         }
 
         detail += ": ";
-        detail += json_text(*error);
+        rejection_reason = json_text(*error);
+        detail += rejection_reason;
+    }
+
+    if (expected_channel == "book"
+        && is_permanent_market_rejection(rejection_reason))
+    {
+        throw UnsupportedMarketError(detail);
     }
 
     throw std::runtime_error(detail);

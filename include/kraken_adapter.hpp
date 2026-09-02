@@ -55,8 +55,6 @@ public:
 private:
     struct WireLevel
     {
-        double price;
-        double quantity;
         std::string price_text;
         std::string quantity_text;
     };
@@ -78,7 +76,10 @@ private:
     static void truncate(Levels& bids, Levels& asks, std::size_t depth);
 
     TrustedBookEvent invalidation() noexcept;
-    OrderBook numeric_book() const;
+    static OrderBook numeric_book_for(
+        const Levels& bids,
+        const Levels& asks
+    );
 
     Product product_;
     std::string native_symbol_;
