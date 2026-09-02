@@ -4,8 +4,12 @@
 #include <boost/json.hpp>
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <chrono>
+#include <cstdlib>
 #include <deque>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -547,4 +551,21 @@ TEST(KrakenLevel2StreamTest, UnsupportedMarketDoesNotRetry)
     EXPECT_TRUE(saw_disconnected);
     EXPECT_FALSE(saw_reconnecting);
     EXPECT_TRUE(saw_error);
+}
+
+TEST(KrakenLiveSmokeTest, ReceivesTrustedUniSnapshot)
+{
+    if (std::getenv("ORDERBOOK_RUN_KRAKEN_LIVE_TESTS") == nullptr)
+    {
+        GTEST_SKIP() << "set ORDERBOOK_RUN_KRAKEN_LIVE_TESTS=1";
+    }
+
+    KrakenLevel2Stream stream("UNI-USD", 10);
+    const TrustedBookEvent event = stream.read_event();
+
+    EXPECT_EQ(event.type, TrustedBookEventType::Snapshot);
+    EXPECT_EQ(event.market, (MarketKey{Venue::Kraken, Product("UNI", "USD")}));
+    ASSERT_TRUE(event.book.has_value());
+    EXPECT_TRUE(event.book->best_bid().has_value());
+    EXPECT_TRUE(event.book->best_ask().has_value());
 }
