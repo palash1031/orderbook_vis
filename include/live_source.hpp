@@ -30,7 +30,8 @@ public:
         std::shared_ptr<LiveStreamHub> hub,
         LiveMessageSourceFactory source_factory,
         ReconnectBackoffConfig backoff_config = {},
-        LiveSourceSleeper sleeper = {}
+        LiveSourceSleeper sleeper = {},
+        std::string_view source_name = "Coinbase"
     );
     LiveSourceRunner(
         LiveStreamSessionId session_id,
@@ -39,7 +40,8 @@ public:
         std::shared_ptr<LiveStreamHub> hub,
         LiveMessageSourceFactory source_factory,
         ReconnectBackoffConfig backoff_config = {},
-        LiveSourceSleeper sleeper = {}
+        LiveSourceSleeper sleeper = {},
+        std::string_view source_name = "Coinbase"
     );
 
     void run(LiveSourceStopCheck should_stop = {});
@@ -52,6 +54,7 @@ private:
     LiveMessageSourceFactory source_factory_;
     LiveSourceSleeper sleeper_;
     ReconnectBackoff backoff_;
+    std::string source_name_;
 };
 
 class LiveMarketService
@@ -63,7 +66,8 @@ public:
         std::shared_ptr<LiveStreamHub> hub,
         LiveProductSourceFactory source_factory,
         ReconnectBackoffConfig backoff_config = {},
-        LiveSourceSleeper sleeper = {}
+        LiveSourceSleeper sleeper = {},
+        std::string_view source_name = "Coinbase"
     );
 
     void run(LiveSourceStopCheck should_stop = {});
@@ -85,6 +89,7 @@ private:
     LiveProductSourceFactory source_factory_;
     ReconnectBackoffConfig backoff_config_;
     LiveSourceSleeper sleeper_;
+    std::string source_name_;
     mutable std::mutex mutex_;
     std::condition_variable changed_;
     Selection selection_;

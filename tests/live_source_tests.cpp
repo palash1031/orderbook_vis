@@ -3,6 +3,7 @@
 #include <boost/json.hpp>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <functional>
 #include <memory>
@@ -84,6 +85,47 @@ private:
     std::function<void()> on_exhausted_;
     std::size_t position_ = 0;
 };
+
+class ScriptedTrustedSource final : public TrustedLiveMessageSource
+{
+public:
+    ScriptedTrustedSource(
+        std::vector<TrustedBookEvent> events,
+        std::function<void()> on_exhausted)
+        : events_(std::move(events)),
+          on_exhausted_(std::move(on_exhausted))
+    {
+    }
+
+    TrustedBookEvent read_event() override
+    {
+        if (position_ < events_.size())
+        {
+            return events_[position_++];
+        }
+
+        on_exhausted_();
+        throw std::runtime_error("trusted script complete");
+    }
+
+private:
+    std::vector<TrustedBookEvent> events_;
+    std::function<void()> on_exhausted_;
+    std::size_t position_ = 0;
+};
+
+TrustedBookEvent trusted_uni_snapshot()
+{
+    OrderBook book;
+    book.apply_update(BookSide::Bid, 4.50, 1.0);
+    book.apply_update(BookSide::Offer, 4.52, 2.0);
+    return {
+        TrustedBookEventType::Snapshot,
+        {Venue::Kraken, Product("UNI", "USD")},
+        MarketTimestamp{std::chrono::nanoseconds{1}},
+        std::move(book)
+    };
+}
 
 std::vector<json::object> drain(
     const std::shared_ptr<LiveStreamSubscriber>& client)
@@ -328,6 +370,49 @@ TEST(LiveSourceRunnerTest, SequenceGapForcesReconnect)
 
     EXPECT_TRUE(saw_gap);
     EXPECT_TRUE(saw_reconnecting);
+}
+
+TEST(LiveSourceRunnerTest, PublishesTrustedVenueEventsWithoutCoinbaseParsing)
+{
+    auto hub = std::make_shared<LiveStreamHub>();
+    const auto client = hub->subscribe();
+    bool stop = false;
+    LiveSourceRunner runner(
+        "UNI-USD",
+        {},
+        hub,
+        [&]() -> std::unique_ptr<LiveMessageSource>
+        {
+            return std::make_unique<ScriptedTrustedSource>(
+                std::vector<TrustedBookEvent>{trusted_uni_snapshot()},
+                [&stop]
+                {
+                    stop = true;
+                }
+            );
+        },
+        ReconnectBackoffConfig{},
+        [](std::chrono::milliseconds)
+        {
+        },
+        "Kraken"
+    );
+
+    runner.run([&stop]
+    {
+        return stop;
+    });
+
+    const std::vector<json::object> messages = drain(client);
+    const bool published_column = std::any_of(
+        messages.begin(),
+        messages.end(),
+        [](const json::object& payload)
+        {
+            return payload.at("type").as_string() == "column";
+        }
+    );
+    EXPECT_TRUE(published_column);
 }
 
 TEST(LiveMarketServiceTest, NormalizesAndValidatesSwitchControls)

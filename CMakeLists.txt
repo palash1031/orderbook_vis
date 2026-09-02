@@ -28,6 +28,7 @@ add_library(orderbook_core
     src/reconnect_backoff.cpp
     src/market.cpp
     src/viewer_config.cpp
+    src/live_message_source.cpp
 )
 
 target_include_directories(orderbook_core PUBLIC include)

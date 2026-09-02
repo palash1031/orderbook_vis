@@ -3,6 +3,7 @@
 #include "book_reconstructor.hpp"
 #include "heatmap_history.hpp"
 #include "sequence_tracker.hpp"
+#include "venue_adapter.hpp"
 
 #include <cstddef>
 #include <optional>
@@ -39,6 +40,7 @@ public:
     );
 
     LiveHeatmapResult process(std::string_view raw_message);
+    LiveHeatmapResult process(const TrustedBookEvent& event);
     LiveHeatmapResult begin_recovery();
 
     const std::string& product_id() const noexcept;
