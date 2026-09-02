@@ -1,0 +1,2 @@
+{"channel":"book","type":"snapshot","data":[{"symbol":"UNI/USD","bids":[{"price":4.50,"qty":3.000},{"price":4.49,"qty":4}],"asks":[{"price":4.51,"qty":1.000},{"price":4.52,"qty":2.000}],"checksum":2090218919,"timestamp":"2026-09-02T12:00:00.000000001Z"}]}
+{"channel":"book","type":"update","data":[{"symbol":"UNI/USD","asks":[{"price":4.51,"qty":0},{"price":4.53,"qty":5.000},{"price":4.53,"qty":6.000}],"bids":[{"price":4.48,"qty":1},{"price":4.48,"qty":0}],"checksum":387929384,"timestamp":"2026-09-02T12:00:00.100000001Z"}]}

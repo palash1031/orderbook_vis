@@ -29,6 +29,7 @@ add_library(orderbook_core
     src/market.cpp
     src/viewer_config.cpp
     src/live_message_source.cpp
+    src/kraken_adapter.cpp
 )
 
 target_include_directories(orderbook_core PUBLIC include)
@@ -106,6 +107,7 @@ if(BUILD_TESTING)
         tests/live_source_tests.cpp
         tests/market_tests.cpp
         tests/viewer_config_tests.cpp
+        tests/kraken_adapter_tests.cpp
     )
 
     target_link_libraries(orderbook_tests PRIVATE
