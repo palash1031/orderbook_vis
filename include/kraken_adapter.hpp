@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -18,19 +19,33 @@ std::string make_kraken_book_subscription(
     std::string_view native_symbol,
     std::size_t depth = default_kraken_book_depth
 );
+std::string make_kraken_book_subscription(
+    std::span<const std::string> native_symbols,
+    std::size_t depth = default_kraken_book_depth
+);
+
+struct KrakenInstrument
+{
+    Product product;
+    std::string native_symbol;
+    std::string status;
+};
 
 class KrakenInstrumentCatalog
 {
 public:
     static KrakenInstrumentCatalog parse(std::string_view raw_message);
 
+    std::optional<KrakenInstrument> instrument(
+        const Product& product
+    ) const;
     std::optional<std::string> native_symbol(const Product& product) const;
     std::optional<Product> canonical_product(
         std::string_view native_symbol
     ) const;
 
 private:
-    std::map<Product, std::string> native_by_product_;
+    std::map<Product, KrakenInstrument> instruments_by_product_;
     std::map<std::string, Product> product_by_native_;
 };
 

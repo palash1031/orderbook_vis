@@ -4,6 +4,7 @@
 #include "live_message_source.hpp"
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -16,6 +17,10 @@ public:
     virtual void write(std::string_view message) = 0;
     virtual std::string read() = 0;
 };
+
+using KrakenWireFactory = std::function<std::unique_ptr<KrakenWire>()>;
+
+std::unique_ptr<KrakenWire> make_kraken_wire();
 
 class KrakenLevel2Stream final : public TrustedLiveMessageSource
 {

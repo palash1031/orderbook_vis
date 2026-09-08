@@ -116,6 +116,26 @@ TEST(KrakenCatalogTest, TranslatesUniNativeSymbolFromInstrumentMetadata)
     EXPECT_FALSE(catalog.native_symbol(Product("ETH", "USD")).has_value());
 }
 
+TEST(KrakenCatalogTest, RetainsListedNonOnlineInstrumentStatus)
+{
+    const KrakenInstrumentCatalog catalog =
+        KrakenInstrumentCatalog::parse(instrument_fixture);
+
+    const std::optional<KrakenInstrument> online =
+        catalog.instrument(Product("UNI", "USD"));
+    ASSERT_TRUE(online.has_value());
+    EXPECT_EQ(online->product, Product("UNI", "USD"));
+    EXPECT_EQ(online->native_symbol, "UNI/USD");
+    EXPECT_EQ(online->status, "online");
+
+    const std::optional<KrakenInstrument> maintenance =
+        catalog.instrument(Product("ETH", "USD"));
+    ASSERT_TRUE(maintenance.has_value());
+    EXPECT_EQ(maintenance->native_symbol, "ETH/USD");
+    EXPECT_EQ(maintenance->status, "maintenance");
+    EXPECT_FALSE(catalog.native_symbol(Product("ETH", "USD")).has_value());
+}
+
 TEST(KrakenCatalogTest, RejectsInvalidAndAmbiguousPairMetadata)
 {
     EXPECT_THROW(
@@ -173,6 +193,31 @@ TEST(KrakenSubscriptionTest, UsesOfficialDepthSetAndCanonicalNativeBoundary)
     );
     EXPECT_THROW(
         make_kraken_book_subscription("UNI/USD", 50),
+        std::invalid_argument
+    );
+}
+
+TEST(KrakenSubscriptionTest, BuildsOneOrderedMultiSymbolRequest)
+{
+    const std::array<std::string, 2> native_symbols{
+        "XBT/USD",
+        "UNI/USD"
+    };
+    const json::object request = json::parse(
+        make_kraken_book_subscription(native_symbols, 100)
+    ).as_object();
+    const json::object& params = request.at("params").as_object();
+    const json::array& symbols = params.at("symbol").as_array();
+
+    EXPECT_EQ(params.at("channel").as_string(), "book");
+    EXPECT_EQ(params.at("depth").as_int64(), 100);
+    ASSERT_EQ(symbols.size(), 2U);
+    EXPECT_EQ(symbols[0].as_string(), "XBT/USD");
+    EXPECT_EQ(symbols[1].as_string(), "UNI/USD");
+
+    const std::span<const std::string> empty;
+    EXPECT_THROW(
+        make_kraken_book_subscription(empty),
         std::invalid_argument
     );
 }

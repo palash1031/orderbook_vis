@@ -1,0 +1,8 @@
+{"method":"subscribe","success":true,"result":{"channel":"instrument","snapshot":true}}
+{"channel":"instrument","type":"snapshot","data":{"assets":[],"pairs":[{"symbol":"XBT/USD","base":"BTC","quote":"USD","status":"online"},{"symbol":"UNI/USD","base":"UNI","quote":"USD","status":"online"},{"symbol":"ETH/USD","base":"ETH","quote":"USD","status":"maintenance"}]}}
+{"method":"subscribe","success":true,"result":{"channel":"book","depth":500,"snapshot":true,"symbol":"XBT/USD"}}
+{"method":"subscribe","success":true,"result":{"channel":"book","depth":500,"snapshot":true,"symbol":"UNI/USD"}}
+{"channel":"book","type":"snapshot","data":[{"symbol":"XBT/USD","bids":[{"price":"100","qty":"1"}],"asks":[{"price":"101","qty":"2"}],"checksum":1921342123,"timestamp":"2026-09-08T12:00:00.000000001Z"}]}
+{"channel":"book","type":"snapshot","data":[{"symbol":"UNI/USD","bids":[{"price":"4.50","qty":"3"}],"asks":[{"price":"4.51","qty":"1"}],"checksum":4041626189,"timestamp":"2026-09-08T12:00:00.000000002Z"}]}
+{"channel":"book","type":"update","data":[{"symbol":"UNI/USD","bids":[],"asks":[{"price":"4.51","qty":"0"},{"price":"4.52","qty":"2"}],"checksum":835869235,"timestamp":"2026-09-08T12:00:00.000000003Z"}]}
+{"channel":"book","type":"update","data":[{"symbol":"XBT/USD","bids":[{"price":"100","qty":"5"}],"asks":[],"checksum":1978179250,"timestamp":"2026-09-08T12:00:00.000000004Z"}]}

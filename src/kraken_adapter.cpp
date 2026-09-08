@@ -627,9 +627,22 @@ std::string make_kraken_book_subscription(
     std::string_view native_symbol,
     std::size_t depth)
 {
-    if (!valid_native_symbol(native_symbol))
+    const std::string symbol(native_symbol);
+    return make_kraken_book_subscription(
+        std::span<const std::string>(&symbol, 1),
+        depth
+    );
+}
+
+std::string make_kraken_book_subscription(
+    std::span<const std::string> native_symbols,
+    std::size_t depth)
+{
+    if (native_symbols.empty())
     {
-        throw std::invalid_argument("Kraken book requires a native symbol");
+        throw std::invalid_argument(
+            "Kraken book requires at least one native symbol"
+        );
     }
 
     if (!is_supported_kraken_book_depth(depth))
@@ -640,7 +653,19 @@ std::string make_kraken_book_subscription(
     }
 
     json::array symbols;
-    symbols.emplace_back(native_symbol);
+    symbols.reserve(native_symbols.size());
+
+    for (const std::string& native_symbol : native_symbols)
+    {
+        if (!valid_native_symbol(native_symbol))
+        {
+            throw std::invalid_argument(
+                "Kraken book requires native symbols"
+            );
+        }
+
+        symbols.emplace_back(native_symbol);
+    }
 
     json::object params;
     params["channel"] = "book";
@@ -690,13 +715,11 @@ KrakenInstrumentCatalog KrakenInstrumentCatalog::parse(
                 throw std::invalid_argument("Invalid Kraken native symbol");
             }
 
-            if (status != "online")
-            {
-                continue;
-            }
-
             if (
-                !catalog.native_by_product_.emplace(product, symbol).second
+                !catalog.instruments_by_product_.emplace(
+                    product,
+                    KrakenInstrument{product, symbol, status}
+                ).second
                 || !catalog.product_by_native_.emplace(symbol, product).second
             )
             {
@@ -717,13 +740,23 @@ KrakenInstrumentCatalog KrakenInstrumentCatalog::parse(
     }
 }
 
+std::optional<KrakenInstrument> KrakenInstrumentCatalog::instrument(
+    const Product& product) const
+{
+    const auto found = instruments_by_product_.find(product);
+    return found == instruments_by_product_.end()
+        ? std::nullopt
+        : std::optional<KrakenInstrument>{found->second};
+}
+
 std::optional<std::string> KrakenInstrumentCatalog::native_symbol(
     const Product& product) const
 {
-    const auto found = native_by_product_.find(product);
-    return found == native_by_product_.end()
+    const auto found = instruments_by_product_.find(product);
+    return found == instruments_by_product_.end()
+            || found->second.status != "online"
         ? std::nullopt
-        : std::optional<std::string>{found->second};
+        : std::optional<std::string>{found->second.native_symbol};
 }
 
 std::optional<Product> KrakenInstrumentCatalog::canonical_product(

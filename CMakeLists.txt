@@ -44,6 +44,7 @@ add_library(coinbase_transport
     src/coinbase_level2_stream.cpp
     src/coinbase_universe_session.cpp
     src/kraken_level2_stream.cpp
+    src/kraken_universe_session.cpp
     src/live_source.cpp
 )
 
@@ -119,6 +120,7 @@ if(BUILD_TESTING)
         tests/market_state_store_tests.cpp
         tests/venue_session_tests.cpp
         tests/coinbase_universe_session_tests.cpp
+        tests/kraken_universe_session_tests.cpp
     )
 
     target_link_libraries(orderbook_tests PRIVATE

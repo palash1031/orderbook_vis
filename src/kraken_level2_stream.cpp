@@ -258,7 +258,7 @@ KrakenLevel2Stream::KrakenLevel2Stream(
         throw std::invalid_argument("Unsupported Kraken book depth");
     }
 
-    wire_ = std::make_unique<BeastKrakenWire>();
+    wire_ = make_kraken_wire();
     initialize();
 }
 
@@ -398,4 +398,9 @@ VenueMarketStatus KrakenLevel2Stream::status() const noexcept
     return adapter_
         ? adapter_->status()
         : VenueMarketStatus::Connecting;
+}
+
+std::unique_ptr<KrakenWire> make_kraken_wire()
+{
+    return std::make_unique<BeastKrakenWire>();
 }
