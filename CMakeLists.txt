@@ -115,6 +115,7 @@ if(BUILD_TESTING)
         tests/kraken_stream_tests.cpp
         tests/universe_tests.cpp
         tests/market_state_store_tests.cpp
+        tests/venue_session_tests.cpp
     )
 
     target_link_libraries(orderbook_tests PRIVATE
