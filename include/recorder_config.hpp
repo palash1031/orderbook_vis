@@ -14,6 +14,9 @@ struct RecorderOptions
 std::string normalize_product_id(std::string_view product_id);
 std::string default_capture_path(std::string_view product_id);
 std::string make_level2_subscription(std::string_view product_id);
+std::string make_level2_subscription(
+    std::span<const std::string> product_ids
+);
 std::string make_heartbeat_subscription();
 
 RecorderOptions parse_recorder_options(

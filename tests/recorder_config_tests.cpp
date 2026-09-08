@@ -5,6 +5,7 @@
 
 #include <array>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 
 namespace json = boost::json;
@@ -58,6 +59,37 @@ TEST(RecorderConfigTest, BuildsStructuredSingleProductSubscription)
         subscription.at("product_ids").as_array();
     ASSERT_EQ(products.size(), 1U);
     EXPECT_EQ(products.front().as_string(), "SOL-USD");
+}
+
+TEST(RecorderConfigTest, BuildsOrderedNormalizedMultiProductSubscription)
+{
+    const std::array<std::string, 3> configured{
+        "btc-usd",
+        " uni-usd ",
+        "SOL-USD"
+    };
+    const json::object subscription = json::parse(
+        make_level2_subscription(configured)
+    ).as_object();
+
+    EXPECT_EQ(subscription.at("type").as_string(), "subscribe");
+    EXPECT_EQ(subscription.at("channel").as_string(), "level2");
+    const json::array& products =
+        subscription.at("product_ids").as_array();
+    ASSERT_EQ(products.size(), 3U);
+    EXPECT_EQ(products[0].as_string(), "BTC-USD");
+    EXPECT_EQ(products[1].as_string(), "UNI-USD");
+    EXPECT_EQ(products[2].as_string(), "SOL-USD");
+}
+
+TEST(RecorderConfigTest, RejectsEmptyMultiProductSubscription)
+{
+    const std::span<const std::string> products;
+
+    EXPECT_THROW(
+        make_level2_subscription(products),
+        std::invalid_argument
+    );
 }
 
 TEST(RecorderConfigTest, BuildsSeparateHeartbeatSubscription)

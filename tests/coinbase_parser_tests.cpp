@@ -60,6 +60,74 @@ TEST(CoinbaseParserTest, IgnoresSubscriptionsMessage)
     EXPECT_FALSE(CoinbaseParser::parse(message).has_value());
 }
 
+TEST(CoinbaseParserTest, FramePreservesSequenceForNonBookMessage)
+{
+    const std::string message = R"({
+        "channel":"heartbeats",
+        "timestamp":"2026-08-27T19:28:02Z",
+        "sequence_num":17,
+        "events":[{"current_time":"2026-08-27T19:28:02Z"}]
+    })";
+
+    const ParsedCoinbaseFrame frame = CoinbaseParser::parse_frame(message);
+
+    EXPECT_EQ(frame.sequence_num, 17U);
+    EXPECT_TRUE(frame.book_messages.empty());
+}
+
+TEST(CoinbaseParserTest, FramePreservesMultipleProductsInEventOrder)
+{
+    const std::string events =
+        make_event(
+            "update",
+            make_update("bid", "80000.01", "1.5"),
+            "BTC-USD"
+        )
+        + ","
+        + make_event(
+            "update",
+            make_update("offer", "4.58", "310.0"),
+            "UNI-USD"
+        );
+
+    const ParsedCoinbaseFrame frame = CoinbaseParser::parse_frame(
+        make_level2_message(events, "23")
+    );
+
+    EXPECT_EQ(frame.sequence_num, 23U);
+    ASSERT_EQ(frame.book_messages.size(), 2U);
+    EXPECT_EQ(frame.book_messages[0].sequence_num, 23U);
+    EXPECT_EQ(frame.book_messages[0].product_id, "BTC-USD");
+    EXPECT_EQ(frame.book_messages[0].type, BookEventType::Update);
+    ASSERT_EQ(frame.book_messages[0].updates.size(), 1U);
+    EXPECT_EQ(frame.book_messages[0].updates[0].side, BookSide::Bid);
+    EXPECT_DOUBLE_EQ(frame.book_messages[0].updates[0].price, 80000.01);
+    EXPECT_EQ(frame.book_messages[1].sequence_num, 23U);
+    EXPECT_EQ(frame.book_messages[1].product_id, "UNI-USD");
+    EXPECT_EQ(frame.book_messages[1].type, BookEventType::Update);
+    ASSERT_EQ(frame.book_messages[1].updates.size(), 1U);
+    EXPECT_EQ(frame.book_messages[1].updates[0].side, BookSide::Offer);
+    EXPECT_DOUBLE_EQ(frame.book_messages[1].updates[0].price, 4.58);
+}
+
+TEST(CoinbaseParserTest, FrameKeepsSameProductEventsSeparate)
+{
+    const std::string events =
+        make_event("update", make_update("bid", "100.0", "1.0"))
+        + ","
+        + make_event("update", make_update("offer", "101.0", "2.0"));
+
+    const ParsedCoinbaseFrame frame = CoinbaseParser::parse_frame(
+        make_level2_message(events)
+    );
+
+    ASSERT_EQ(frame.book_messages.size(), 2U);
+    ASSERT_EQ(frame.book_messages[0].updates.size(), 1U);
+    ASSERT_EQ(frame.book_messages[1].updates.size(), 1U);
+    EXPECT_EQ(frame.book_messages[0].updates[0].side, BookSide::Bid);
+    EXPECT_EQ(frame.book_messages[1].updates[0].side, BookSide::Offer);
+}
+
 TEST(CoinbaseParserTest, ParsesSnapshot)
 {
     const std::string updates =
@@ -454,6 +522,32 @@ TEST(CoinbaseParserTest, MixedProductIdsThrow)
 
     EXPECT_THROW(
         CoinbaseParser::parse(make_level2_message(events)),
+        std::invalid_argument
+    );
+}
+
+TEST(CoinbaseParserTest, LegacyParserRejectsFrameAcceptedForMultipleProducts)
+{
+    const std::string events =
+        make_event(
+            "update",
+            make_update("bid", "80000.01", "1.0"),
+            "BTC-USD"
+        )
+        + ","
+        + make_event(
+            "update",
+            make_update("offer", "4.58", "2.0"),
+            "UNI-USD"
+        );
+    const std::string raw_message = make_level2_message(events, "31");
+
+    ASSERT_EQ(
+        CoinbaseParser::parse_frame(raw_message).book_messages.size(),
+        2U
+    );
+    EXPECT_THROW(
+        CoinbaseParser::parse_message(raw_message),
         std::invalid_argument
     );
 }

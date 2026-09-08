@@ -40,8 +40,31 @@ std::string default_capture_path(std::string_view product_id)
 
 std::string make_level2_subscription(std::string_view product_id)
 {
+    const std::string canonical_product_id = normalize_product_id(
+        product_id
+    );
+    return make_level2_subscription(
+        std::span<const std::string>(&canonical_product_id, 1)
+    );
+}
+
+std::string make_level2_subscription(
+    std::span<const std::string> product_ids)
+{
+    if (product_ids.empty())
+    {
+        throw std::invalid_argument(
+            "Coinbase Level 2 subscription requires at least one product"
+        );
+    }
+
     json::array products;
-    products.emplace_back(normalize_product_id(product_id));
+    products.reserve(product_ids.size());
+
+    for (const std::string& product_id : product_ids)
+    {
+        products.emplace_back(normalize_product_id(product_id));
+    }
 
     json::object subscription;
     subscription["type"] = "subscribe";

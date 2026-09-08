@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstdint>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -208,6 +209,87 @@ double parse_decimal_string(
 
     return value;
 }
+
+ParsedCoinbaseFrame parse_frame_impl(const std::string& raw_message)
+{
+    const json::value parsed = json::parse(raw_message);
+    const auto& object = parsed.as_object();
+    const auto& channel = object.at("channel").as_string();
+    const std::uint64_t sequence_num = parse_sequence_num(
+        object.at("sequence_num")
+    );
+
+    ParsedCoinbaseFrame frame{sequence_num, {}};
+
+    if (channel != "l2_data")
+    {
+        return frame;
+    }
+
+    const MarketTimestamp timestamp = parse_timestamp(
+        object.at("timestamp")
+    );
+    const auto& events = object.at("events").as_array();
+
+    if (events.empty())
+    {
+        throw std::invalid_argument(
+            "Coinbase Level 2 message contains no events"
+        );
+    }
+
+    frame.book_messages.reserve(events.size());
+
+    for (const auto& event_value : events)
+    {
+        const auto& event = event_value.as_object();
+        const BookEventType event_type = parse_event_type(event);
+        const auto& event_product_id = event.at("product_id").as_string();
+        const auto& updates = event.at("updates").as_array();
+
+        ParsedBookMessage message{
+            sequence_num,
+            event_type,
+            {},
+            timestamp,
+            std::string(
+                event_product_id.c_str(),
+                event_product_id.size()
+            )
+        };
+        message.updates.reserve(updates.size());
+
+        for (const auto& update_value : updates)
+        {
+            const auto& update_object = update_value.as_object();
+            message.updates.emplace_back(
+                parse_book_side(update_object),
+                parse_decimal_string(update_object, "price_level"),
+                parse_decimal_string(update_object, "new_quantity")
+            );
+        }
+
+        frame.book_messages.push_back(std::move(message));
+    }
+
+    return frame;
+}
+}
+
+ParsedCoinbaseFrame CoinbaseParser::parse_frame(
+    const std::string& raw_message)
+{
+    try
+    {
+        return parse_frame_impl(raw_message);
+    }
+    catch (const std::exception& error)
+    {
+        throw std::invalid_argument(
+            std::string("Failed to parse Coinbase message: ")
+            + error.what()
+        );
+    }
 }
 
 ParsedCoinbaseMessage CoinbaseParser::parse_message(
@@ -215,88 +297,46 @@ ParsedCoinbaseMessage CoinbaseParser::parse_message(
 {
     try
     {
-        const json::value parsed = json::parse(raw_message);
-        const auto& object = parsed.as_object();
-        const auto& channel = object.at("channel").as_string();
-        const std::uint64_t sequence_num = parse_sequence_num(
-            object.at("sequence_num")
-        );
+        ParsedCoinbaseFrame frame = parse_frame_impl(raw_message);
 
-        if (channel != "l2_data")
+        if (frame.book_messages.empty())
         {
-            return {sequence_num, std::nullopt};
+            return {frame.sequence_num, std::nullopt};
         }
 
-        ParsedBookMessage message;
-        message.sequence_num = sequence_num;
-        message.timestamp = parse_timestamp(object.at("timestamp"));
+        ParsedBookMessage message = std::move(frame.book_messages.front());
 
-        const auto& events = object.at("events").as_array();
-
-        if (events.empty())
+        for (
+            auto iterator = std::next(frame.book_messages.begin());
+            iterator != frame.book_messages.end();
+            ++iterator
+        )
         {
-            throw std::invalid_argument(
-                "Coinbase Level 2 message contains no events"
-            );
-        }
-
-        std::optional<BookEventType> message_type;
-        std::optional<std::string> product_id;
-
-        for (const auto& event_value : events)
-        {
-            const auto& event = event_value.as_object();
-            const BookEventType event_type = parse_event_type(event);
-            const auto& event_product_id =
-                event.at("product_id").as_string();
-            const std::string parsed_product_id(
-                event_product_id.c_str(),
-                event_product_id.size()
-            );
-
-            if (message_type && *message_type != event_type)
+            if (message.type != iterator->type)
             {
                 throw std::invalid_argument(
                     "Coinbase Level 2 message contains mixed event types"
                 );
             }
 
-            message_type = event_type;
-
-            if (product_id && *product_id != parsed_product_id)
+            if (message.product_id != iterator->product_id)
             {
                 throw std::invalid_argument(
                     "Coinbase Level 2 message contains mixed product IDs"
                 );
             }
 
-            product_id = parsed_product_id;
-
-            const auto& updates = event.at("updates").as_array();
             message.updates.reserve(
-                message.updates.size() + updates.size()
+                message.updates.size() + iterator->updates.size()
             );
-
-            for (const auto& update_value : updates)
-            {
-                const auto& update_object = update_value.as_object();
-                const BookSide side = parse_book_side(update_object);
-                const double price = parse_decimal_string(
-                    update_object,
-                    "price_level"
-                );
-                const double quantity = parse_decimal_string(
-                    update_object,
-                    "new_quantity"
-                );
-
-                message.updates.emplace_back(side, price, quantity);
-            }
+            message.updates.insert(
+                message.updates.end(),
+                std::make_move_iterator(iterator->updates.begin()),
+                std::make_move_iterator(iterator->updates.end())
+            );
         }
 
-        message.type = *message_type;
-        message.product_id = std::move(*product_id);
-        return {sequence_num, std::move(message)};
+        return {frame.sequence_num, std::move(message)};
     }
     catch (const std::exception& error)
     {
