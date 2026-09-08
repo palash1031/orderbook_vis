@@ -121,6 +121,7 @@ if(BUILD_TESTING)
         tests/venue_session_tests.cpp
         tests/coinbase_universe_session_tests.cpp
         tests/kraken_universe_session_tests.cpp
+        tests/venue_recovery_tests.cpp
     )
 
     target_link_libraries(orderbook_tests PRIVATE
