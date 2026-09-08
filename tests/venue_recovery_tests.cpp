@@ -28,7 +28,7 @@ using namespace std::chrono_literals;
 class StepGate
 {
 public:
-    bool await(std::size_t target, bool advance)
+    bool await(std::size_t target)
     {
         std::unique_lock lock(mutex_);
 
@@ -48,12 +48,20 @@ public:
             return false;
         }
 
-        if (advance)
+        return true;
+    }
+
+    bool complete()
+    {
+        std::lock_guard lock(mutex_);
+
+        if (cancelled_)
         {
-            ++step_;
-            changed_.notify_all();
+            return false;
         }
 
+        ++step_;
+        changed_.notify_all();
         return true;
     }
 
@@ -151,7 +159,7 @@ public:
         ScriptAction action = std::move(actions_.front());
         actions_.pop_front();
 
-        if (!gate_.await(action.step, action.event.has_value()))
+        if (!gate_.await(action.step))
         {
             throw std::runtime_error("coordinated session timed out");
         }
@@ -280,6 +288,14 @@ TEST(VenueRecoveryTest, VenueFailuresAndRecoveryRemainIndependent)
         [&](const VenueSessionEvent& event)
         {
             apply(event);
+
+            if (std::holds_alternative<TrustedBookEvent>(event))
+            {
+                record(
+                    gate.complete(),
+                    "Could not complete a Coinbase store update"
+                );
+            }
         },
         VenueUniverseSessionFactory{
             [&]() -> std::unique_ptr<VenueUniverseSession>
@@ -327,6 +343,21 @@ TEST(VenueRecoveryTest, VenueFailuresAndRecoveryRemainIndependent)
             apply(event);
 
             const auto* book = std::get_if<TrustedBookEvent>(&event);
+            const auto* status = std::get_if<VenueMarketStatusEvent>(&event);
+            const bool scripted_event = book
+                || (
+                    status
+                    && status->status
+                        == VenueMarketStatus::WaitingForSnapshot
+                );
+
+            if (scripted_event)
+            {
+                record(
+                    gate.complete(),
+                    "Could not complete a Kraken store update"
+                );
+            }
 
             if (
                 book
