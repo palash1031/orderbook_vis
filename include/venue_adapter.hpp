@@ -23,8 +23,11 @@ enum class VenueMarketStatus
     WaitingForSnapshot,
     Live,
     Stale,
+    Disconnected,
     Reconnecting
 };
+
+std::string_view venue_market_status_name(VenueMarketStatus status);
 
 enum class TrustedBookEventType
 {
