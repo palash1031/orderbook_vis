@@ -40,7 +40,9 @@ target_include_directories(orderbook_core PUBLIC include)
 target_link_libraries(orderbook_core PUBLIC Boost::json)
 
 add_library(coinbase_transport
+    src/coinbase_wire.cpp
     src/coinbase_level2_stream.cpp
+    src/coinbase_universe_session.cpp
     src/kraken_level2_stream.cpp
     src/live_source.cpp
 )
@@ -116,6 +118,7 @@ if(BUILD_TESTING)
         tests/universe_tests.cpp
         tests/market_state_store_tests.cpp
         tests/venue_session_tests.cpp
+        tests/coinbase_universe_session_tests.cpp
     )
 
     target_link_libraries(orderbook_tests PRIVATE

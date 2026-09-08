@@ -1,5 +1,6 @@
 #pragma once
 
+#include "coinbase_wire.hpp"
 #include "live_message_source.hpp"
 
 #include <memory>
@@ -10,6 +11,10 @@ class CoinbaseLevel2Stream final : public LiveMessageSource
 {
 public:
     explicit CoinbaseLevel2Stream(std::string_view product_id);
+    CoinbaseLevel2Stream(
+        std::string_view product_id,
+        std::unique_ptr<CoinbaseWire> wire
+    );
     ~CoinbaseLevel2Stream() override;
 
     CoinbaseLevel2Stream(const CoinbaseLevel2Stream&) = delete;
@@ -20,6 +25,5 @@ public:
     std::string read() override;
 
 private:
-    struct Implementation;
-    std::unique_ptr<Implementation> implementation_;
+    std::unique_ptr<CoinbaseWire> wire_;
 };
