@@ -131,6 +131,7 @@ if(BUILD_TESTING)
         tests/fragmentation_tests.cpp
         tests/scanner_stream_tests.cpp
         tests/scanner_state_tests.cpp
+        tests/scanner_acceptance_tests.cpp
     )
 
     target_link_libraries(orderbook_tests PRIVATE
@@ -140,6 +141,15 @@ if(BUILD_TESTING)
 
     include(GoogleTest)
     gtest_discover_tests(orderbook_tests)
+
+    find_program(NODE_EXECUTABLE NAMES node)
+    if(NODE_EXECUTABLE)
+        add_test(
+            NAME ScannerUiTest
+            COMMAND ${NODE_EXECUTABLE} --test
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/scanner_ui_tests.js
+        )
+    endif()
 endif()
 
 if(BUILD_BENCHMARKS)

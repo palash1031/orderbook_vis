@@ -185,3 +185,20 @@ TEST(ViewerConfigTest, ScannerRejectsSingleMarketOptions)
     };
     EXPECT_THROW(parse_viewer_options(price_bin), std::invalid_argument);
 }
+
+TEST(ViewerConfigTest, SelectsModeSpecificStreamMetadata)
+{
+    ViewerOptions replay;
+    EXPECT_EQ(viewer_stream_mode_name(replay), "replay");
+    EXPECT_EQ(viewer_websocket_path(replay), "/ws/heatmap");
+
+    ViewerOptions live;
+    live.live = true;
+    EXPECT_EQ(viewer_stream_mode_name(live), "live");
+    EXPECT_EQ(viewer_websocket_path(live), "/ws/heatmap");
+
+    ViewerOptions scanner;
+    scanner.scanner = true;
+    EXPECT_EQ(viewer_stream_mode_name(scanner), "scanner");
+    EXPECT_EQ(viewer_websocket_path(scanner), "/ws/scanner");
+}

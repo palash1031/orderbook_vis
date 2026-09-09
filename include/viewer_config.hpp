@@ -30,3 +30,11 @@ ViewerOptions parse_viewer_options(
     std::filesystem::path default_web_root = "web",
     std::optional<std::string_view> environment_port = std::nullopt
 );
+
+std::string_view viewer_stream_mode_name(
+    const ViewerOptions& options
+) noexcept;
+
+std::string_view viewer_websocket_path(
+    const ViewerOptions& options
+) noexcept;

@@ -241,3 +241,20 @@ ViewerOptions parse_viewer_options(
 
     return options;
 }
+
+std::string_view viewer_stream_mode_name(
+    const ViewerOptions& options) noexcept
+{
+    if (options.scanner)
+    {
+        return "scanner";
+    }
+
+    return options.live ? "live" : "replay";
+}
+
+std::string_view viewer_websocket_path(
+    const ViewerOptions& options) noexcept
+{
+    return options.scanner ? "/ws/scanner" : "/ws/heatmap";
+}

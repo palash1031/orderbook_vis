@@ -6,6 +6,12 @@ const context = canvas.getContext("2d", { alpha: false });
 const message = document.querySelector("#chart-message");
 const tooltip = document.querySelector("#tooltip");
 const connection = document.querySelector("#connection-state");
+const heatmapWorkspace = document.querySelector("#heatmap-workspace");
+const scannerWorkspace = document.querySelector("#scanner-workspace");
+const scannerRows = document.querySelector("#scanner-rows");
+const scannerSort = document.querySelector("#scanner-sort");
+const singleMarketSummary = document.querySelector("#single-market-summary");
+const scannerModel = new window.DepthfieldScanner.ScannerModel();
 
 const controls = {
   playbackBar: document.querySelector(".playback-bar"),
@@ -34,7 +40,10 @@ const cursorFields = {
 
 const state = {
   socket: null,
+  socketPath: "/ws/heatmap",
   reconnectTimer: null,
+  discoveryTimer: null,
+  discoveryInFlight: false,
   reconnectAttempt: 0,
   data: null,
   streamMode: "replay",
@@ -53,6 +62,8 @@ const state = {
   hover: null,
   geometry: null,
   renderQueued: false,
+  scannerConnected: false,
+  sortScannerByDivergence: false,
 };
 
 const reconnectInitialDelayMs = 500;
@@ -100,6 +111,139 @@ function formatQuantity(value) {
   return value.toLocaleString("en-US", { maximumFractionDigits: 4 });
 }
 
+function formatScannerPrice(value) {
+  if (!Number.isFinite(value)) return "—";
+  const magnitude = Math.abs(value);
+  const maximumFractionDigits = magnitude >= 1_000 ? 2 : magnitude >= 1 ? 4 : 6;
+  return value.toLocaleString("en-US", {
+    minimumFractionDigits: Math.min(2, maximumFractionDigits),
+    maximumFractionDigits,
+  });
+}
+
+function scannerStatusLabel(status) {
+  return String(status).replaceAll("_", " ");
+}
+
+function appendStatus(cell, status) {
+  cell.classList.add("unavailable");
+  const label = document.createElement("span");
+  label.className = `status-label status-${status}`;
+  label.textContent = scannerStatusLabel(status);
+  cell.append(label);
+}
+
+function appendQuote(cell, price, detail) {
+  const priceLabel = document.createElement("strong");
+  priceLabel.className = "quote-price";
+  priceLabel.textContent = `$${formatScannerPrice(price)}`;
+  const detailLabel = document.createElement("small");
+  detailLabel.className = "cell-detail";
+  detailLabel.textContent = detail;
+  cell.append(priceLabel, detailLabel);
+}
+
+function renderVenueScannerCell(productId, venue, side) {
+  const cell = document.createElement("td");
+  cell.className = `quote-cell ${side}-side`;
+
+  if (!state.scannerConnected) {
+    appendStatus(cell, "stream_stale");
+    return cell;
+  }
+
+  const value = scannerModel.venueCell(productId, venue, side);
+  if (!value.available) {
+    appendStatus(cell, value.status);
+    return cell;
+  }
+
+  appendQuote(cell, value.price, `${formatQuantity(value.quantity)} qty`);
+  return cell;
+}
+
+function renderBestScannerCell(update, side) {
+  const cell = document.createElement("td");
+  cell.className = `best-cell ${side}-side`;
+  const quote = update?.consolidated;
+  const price = quote?.[`best_${side}`];
+  const quantity = quote?.[`best_${side}_quantity`];
+  const venue = quote?.[`best_${side}_venue`];
+
+  if (
+    !state.scannerConnected
+    || !Number.isFinite(price)
+    || !Number.isFinite(quantity)
+    || !["coinbase", "kraken"].includes(venue)
+    || update?.venues?.[venue]?.status !== "live"
+  ) {
+    appendStatus(cell, state.scannerConnected ? "unavailable" : "stream_stale");
+    return cell;
+  }
+
+  appendQuote(cell, price, `${venue} · ${formatQuantity(quantity)} qty`);
+  cell.querySelector(".cell-detail").classList.add("venue-label", venue);
+  return cell;
+}
+
+function renderDivergenceCell(update) {
+  const cell = document.createElement("td");
+  cell.className = "divergence-cell";
+  const metrics = update?.fragmentation;
+
+  if (!state.scannerConnected || !Number.isFinite(metrics?.max_bps)) {
+    appendStatus(cell, state.scannerConnected ? "unavailable" : "stream_stale");
+    return cell;
+  }
+
+  const value = document.createElement("strong");
+  value.className = "divergence-value";
+  value.textContent = `${metrics.max_bps.toFixed(2)} bps`;
+  const detail = document.createElement("small");
+  detail.className = "cell-detail";
+  detail.textContent = `bid ${metrics.bid_bps.toFixed(2)} · ask ${metrics.ask_bps.toFixed(2)}`;
+  cell.append(value, detail);
+  return cell;
+}
+
+function renderScanner() {
+  const fragment = document.createDocumentFragment();
+  const rows = scannerModel.rows({
+    sortByDivergence: state.sortScannerByDivergence,
+  });
+
+  for (const row of rows) {
+    const tableRow = document.createElement("tr");
+    const market = document.createElement("td");
+    market.className = "market-cell";
+    const product = document.createElement("strong");
+    product.textContent = row.productId;
+    const detail = document.createElement("small");
+    const liveVenues = row.update
+      ? ["coinbase", "kraken"].filter(
+        (venue) => row.update.venues[venue].status === "live",
+      ).length
+      : 0;
+    detail.textContent = state.scannerConnected
+      ? `${liveVenues} / 2 venues live`
+      : "stream stale";
+    market.append(product, detail);
+    tableRow.append(
+      market,
+      renderVenueScannerCell(row.productId, "coinbase", "bid"),
+      renderVenueScannerCell(row.productId, "coinbase", "ask"),
+      renderVenueScannerCell(row.productId, "kraken", "bid"),
+      renderVenueScannerCell(row.productId, "kraken", "ask"),
+      renderBestScannerCell(row.update, "bid"),
+      renderBestScannerCell(row.update, "ask"),
+      renderDivergenceCell(row.update),
+    );
+    fragment.append(tableRow);
+  }
+
+  scannerRows.replaceChildren(fragment);
+}
+
 function formatDuration(milliseconds) {
   if (milliseconds < 1_000) return `${Math.max(0, milliseconds).toFixed(0)} ms`;
   if (milliseconds < 60_000) return `${(milliseconds / 1_000).toFixed(1)} sec`;
@@ -138,6 +282,10 @@ function syncMarketControl(productId) {
 function configureStreamMode(mode) {
   const live = mode === "live";
   state.streamMode = mode;
+  document.body.classList.remove("scanner-mode");
+  heatmapWorkspace.hidden = false;
+  scannerWorkspace.hidden = true;
+  singleMarketSummary.hidden = false;
   controls.playbackBar.classList.toggle("live-mode", live);
   controls.play.hidden = live;
   controls.restartPlayback.hidden = live;
@@ -151,6 +299,16 @@ function configureStreamMode(mode) {
   document.querySelector("#chart-title").textContent = live
     ? "Live resting depth"
     : "Resting depth";
+}
+
+function configureScannerMode() {
+  state.streamMode = "scanner";
+  document.body.classList.add("scanner-mode");
+  heatmapWorkspace.hidden = true;
+  scannerWorkspace.hidden = false;
+  singleMarketSummary.hidden = true;
+  document.querySelector("#stream-mode-label").textContent = "LIVE MARKET SCANNER";
+  renderScanner();
 }
 
 function validateHello(payload) {
@@ -800,7 +958,21 @@ function handlePlaybackState(payload) {
 function handleStreamMessage(event) {
   const payload = JSON.parse(event.data);
 
-  if (payload.type === "hello") {
+  if (payload.type === "scanner_hello") {
+    scannerModel.accept(payload);
+    state.scannerConnected = true;
+    configureScannerMode();
+    setConnectionStatus(
+      "ready",
+      `${payload.venues.length} venues · ${payload.products.length} markets`,
+    );
+  } else if (payload.type === "scanner_update") {
+    if (state.streamMode !== "scanner") {
+      throw new Error("Scanner update arrived on a heatmap stream");
+    }
+    scannerModel.accept(payload);
+    renderScanner();
+  } else if (payload.type === "hello") {
     initializeStream(payload);
   } else if (payload.type === "column") {
     handleColumn(payload);
@@ -814,8 +986,10 @@ function handleStreamMessage(event) {
     }
   } else if (payload.type === "error") {
     setConnectionStatus("error", payload.message || "Heatmap stream failed");
-    message.hidden = false;
-    message.textContent = payload.message || "Heatmap stream failed";
+    if (state.streamMode !== "scanner") {
+      message.hidden = false;
+      message.textContent = payload.message || "Heatmap stream failed";
+    }
   }
 }
 
@@ -844,15 +1018,51 @@ function scheduleReconnect() {
   state.reconnectAttempt += 1;
   setConnectionStatus("", "Reconnecting…");
 
-  if (!state.data || state.data.columns.length === 0) {
+  if (
+    state.streamMode !== "scanner"
+    && (!state.data || state.data.columns.length === 0)
+  ) {
     message.hidden = false;
     message.textContent = "Reconnecting to heatmap stream…";
   }
 
   state.reconnectTimer = window.setTimeout(() => {
     state.reconnectTimer = null;
-    connectStream();
+    discoverStreamEndpoint();
   }, delay);
+}
+
+async function discoverStreamEndpoint() {
+  if (state.discoveryInFlight || socketIsActive(state.socket)) return;
+  state.discoveryInFlight = true;
+
+  if (state.discoveryTimer !== null) {
+    window.clearTimeout(state.discoveryTimer);
+    state.discoveryTimer = null;
+  }
+
+  try {
+    const response = await fetch("/api/metadata", { cache: "no-store" });
+    if (!response.ok) throw new Error("Unable to discover market-data stream");
+    const metadata = await response.json();
+    const scanner = metadata?.stream_mode === "scanner";
+    state.socketPath = scanner ? "/ws/scanner" : "/ws/heatmap";
+
+    if (scanner) {
+      state.scannerConnected = false;
+      configureScannerMode();
+      setConnectionStatus("", "Connecting to market scanner");
+    } else {
+      configureStreamMode(metadata?.stream_mode === "live" ? "live" : "replay");
+    }
+
+    connectStream();
+  } catch (error) {
+    setConnectionStatus("error", "Market-data service unavailable");
+    state.discoveryTimer = window.setTimeout(discoverStreamEndpoint, 1_000);
+  } finally {
+    state.discoveryInFlight = false;
+  }
 }
 
 function connectStream() {
@@ -864,14 +1074,21 @@ function connectStream() {
   }
 
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const socket = new WebSocket(`${protocol}//${window.location.host}/ws/heatmap`);
+  const socket = new WebSocket(
+    `${protocol}//${window.location.host}${state.socketPath}`,
+  );
   let retryOnClose = true;
   state.socket = socket;
 
   socket.addEventListener("open", () => {
     if (state.socket !== socket) return;
     state.reconnectAttempt = 0;
-    setConnectionStatus("", "Loading heatmap stream");
+    setConnectionStatus(
+      "",
+      state.streamMode === "scanner"
+        ? "Loading market scanner"
+        : "Loading heatmap stream",
+    );
     controls.market.disabled = state.streamMode !== "live";
   });
 
@@ -882,12 +1099,17 @@ function connectStream() {
       handleStreamMessage(event);
     } catch (error) {
       retryOnClose = false;
-      setConnectionStatus("error", "Invalid heatmap stream");
-      message.hidden = false;
-      message.textContent = error instanceof Error
-        ? error.message
-        : "Unable to process heatmap stream";
-      socket.close(1002, "Invalid heatmap stream");
+      setConnectionStatus("error", "Invalid market-data stream");
+      state.scannerConnected = false;
+      if (state.streamMode === "scanner") {
+        renderScanner();
+      } else {
+        message.hidden = false;
+        message.textContent = error instanceof Error
+          ? error.message
+          : "Unable to process heatmap stream";
+      }
+      socket.close(1002, "Invalid market-data stream");
     }
   });
 
@@ -895,12 +1117,20 @@ function connectStream() {
     if (state.socket !== socket) return;
     state.socket = null;
     state.playbackStatus = "disconnected";
+    state.scannerConnected = false;
     disableBackendControls();
+
+    if (state.streamMode === "scanner") {
+      renderScanner();
+    }
 
     if (!retryOnClose || event.code === 1000) {
       setConnectionStatus("error", "Stream disconnected");
 
-      if (!state.data || state.data.columns.length === 0) {
+      if (
+        state.streamMode !== "scanner"
+        && (!state.data || state.data.columns.length === 0)
+      ) {
         message.hidden = false;
         message.textContent = "Heatmap stream disconnected";
       }
@@ -919,6 +1149,11 @@ function connectStream() {
 }
 
 function bindControls() {
+  scannerSort.addEventListener("change", () => {
+    state.sortScannerByDivergence = scannerSort.checked;
+    renderScanner();
+  });
+
   controls.market.addEventListener("change", () => {
     if (!sendLiveControl("switch_product", {
       product_id: controls.market.value,
@@ -1003,4 +1238,4 @@ function bindControls() {
 
 bindControls();
 queueRender();
-connectStream();
+discoverStreamEndpoint();

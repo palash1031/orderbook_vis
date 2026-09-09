@@ -1,9 +1,15 @@
 #include "coinbase_level2_stream.hpp"
+#include "coinbase_universe_session.hpp"
 #include "kraken_level2_stream.hpp"
+#include "kraken_universe_session.hpp"
 #include "live_source.hpp"
 #include "live_stream.hpp"
+#include "market_state_store.hpp"
 #include "replay_config.hpp"
 #include "replay_stream.hpp"
+#include "scanner_state.hpp"
+#include "scanner_stream.hpp"
+#include "universe.hpp"
 #include "viewer_config.hpp"
 
 #include <boost/asio.hpp>
@@ -47,6 +53,7 @@ struct ViewerAssets
 {
     std::string index;
     std::string styles;
+    std::string scanner_model;
     std::string script;
 };
 
@@ -56,9 +63,15 @@ struct ServerState
     std::optional<ReplayStreamData> replay;
     std::shared_ptr<LiveStreamHub> live;
     std::shared_ptr<LiveMarketService> live_service;
+    std::shared_ptr<const MarketUniverse> scanner_universe;
+    std::shared_ptr<ScannerStreamHub> scanner;
+    std::shared_ptr<ScannerStatePublisher> scanner_publisher;
     std::string metadata;
+    std::string_view stream_mode = "replay";
+    std::string_view websocket_path = "/ws/heatmap";
     Venue venue = Venue::Coinbase;
     bool live_mode = false;
+    bool scanner_mode = false;
 };
 
 struct Route
@@ -74,7 +87,7 @@ void print_usage(const char* executable)
         << executable
         << " [--heatmap heatmap.json | --live"
         << " [--venue coinbase|kraken] [--product BTC-USD]"
-        << " [--price-bin auto|SIZE]] [--bind 127.0.0.1]"
+        << " [--price-bin auto|SIZE] | --scanner] [--bind 127.0.0.1]"
         << " [--port 8080] [--web-root web] [--public-demo]\n";
 }
 
@@ -104,9 +117,13 @@ std::shared_ptr<ServerState> load_state(const ViewerOptions& options)
     state->assets = {
         read_file(options.web_root / "index.html"),
         read_file(options.web_root / "styles.css"),
+        read_file(options.web_root / "scanner_model.js"),
         read_file(options.web_root / "app.js")
     };
     state->live_mode = options.live;
+    state->scanner_mode = options.scanner;
+    state->stream_mode = viewer_stream_mode_name(options);
+    state->websocket_path = viewer_websocket_path(options);
     state->venue = options.venue;
 
     if (options.live)
@@ -132,6 +149,20 @@ std::shared_ptr<ServerState> load_state(const ViewerOptions& options)
             options.public_demo
                 ? LiveControlAccess::ReadOnly
                 : LiveControlAccess::Interactive
+        );
+    }
+    else if (options.scanner)
+    {
+        state->scanner_universe = std::make_shared<const MarketUniverse>(
+            MarketUniverse::default_usd()
+        );
+        state->scanner = std::make_shared<ScannerStreamHub>(
+            *state->scanner_universe
+        );
+        state->scanner_publisher = std::make_shared<ScannerStatePublisher>(
+            *state->scanner_universe,
+            std::make_shared<MarketStateStore>(),
+            state->scanner
         );
     }
     else
@@ -160,6 +191,14 @@ std::optional<Route> route_request(
     if (target == "/app.js")
     {
         return Route{&state.assets.script, "text/javascript; charset=utf-8"};
+    }
+
+    if (target == "/scanner_model.js")
+    {
+        return Route{
+            &state.assets.scanner_model,
+            "text/javascript; charset=utf-8"
+        };
     }
 
     if (target == "/api/metadata")
@@ -206,12 +245,17 @@ http::response<http::string_body> make_response(
         response.set(http::field::content_type, "application/json");
         json::object health;
         health["status"] = "ok";
-        health["stream"] = "/ws/heatmap";
-        health["mode"] = state.live_mode ? "live" : "replay";
+        health["stream"] = state.websocket_path;
+        health["mode"] = state.stream_mode;
         if (state.live_mode)
         {
             health["product_id"] = state.live_service->product_id();
             health["venue"] = venue_name(state.venue);
+        }
+        else if (state.scanner_mode)
+        {
+            health["product_count"] = state.scanner_universe->size();
+            health["venue_count"] = 2;
         }
         response.body() = json::serialize(health);
     }
@@ -224,6 +268,16 @@ http::response<http::string_body> make_response(
         metadata["stream_mode"] = "live";
         metadata["product_id"] = state.live_service->product_id();
         metadata["venue"] = venue_name(state.venue);
+        response.body() = json::serialize(metadata);
+    }
+    else if (request.target() == "/api/metadata" && state.scanner_mode)
+    {
+        response.result(http::status::ok);
+        response.set(http::field::content_type, "application/json");
+        json::object metadata;
+        metadata["type"] = "metadata";
+        metadata["stream_mode"] = state.stream_mode;
+        metadata["stream"] = state.websocket_path;
         response.body() = json::serialize(metadata);
     }
     else
@@ -286,6 +340,42 @@ bool write_websocket_message(
 void run_live_source(std::shared_ptr<LiveMarketService> service)
 {
     service->run();
+}
+
+void run_coinbase_scanner_source(
+    MarketUniverse universe,
+    std::shared_ptr<ScannerStatePublisher> publisher)
+{
+    CoinbaseUniverseRunner runner(
+        std::move(universe),
+        [publisher = std::move(publisher)](const VenueSessionEvent& event)
+        {
+            publisher->apply(event);
+        },
+        CoinbaseWireFactory{[]
+        {
+            return make_coinbase_wire();
+        }}
+    );
+    runner.run();
+}
+
+void run_kraken_scanner_source(
+    MarketUniverse universe,
+    std::shared_ptr<ScannerStatePublisher> publisher)
+{
+    KrakenUniverseRunner runner(
+        std::move(universe),
+        [publisher = std::move(publisher)](const VenueSessionEvent& event)
+        {
+            publisher->apply(event);
+        },
+        KrakenWireFactory{[]
+        {
+            return make_kraken_wire();
+        }}
+    );
+    runner.run();
 }
 
 void run_replay_websocket(
@@ -538,6 +628,74 @@ void run_live_websocket(
     }
 }
 
+void run_scanner_websocket(
+    tcp::socket socket,
+    http::request<http::string_body> request,
+    const std::shared_ptr<ScannerStreamHub>& hub)
+{
+    websocket::stream<tcp::socket> stream{std::move(socket)};
+    stream.set_option(websocket::stream_base::decorator(
+        [](websocket::response_type& response)
+        {
+            response.set(http::field::server, "orderbook-scanner-stream");
+        }
+    ));
+    stream.read_message_max(4 * 1024);
+    stream.accept(request);
+
+    const std::shared_ptr<ScannerStreamSubscriber> subscriber =
+        hub->subscribe();
+    beast::flat_buffer buffer;
+
+    while (true)
+    {
+        if (const auto message = subscriber->wait_for_message(
+                std::chrono::milliseconds{50}
+            ))
+        {
+            if (!write_websocket_message(stream, *message))
+            {
+                return;
+            }
+        }
+
+        beast::error_code error;
+        const std::size_t available = stream.next_layer().available(error);
+
+        if (error)
+        {
+            return;
+        }
+
+        if (available == 0)
+        {
+            continue;
+        }
+
+        stream.read(buffer, error);
+
+        if (error == websocket::error::closed)
+        {
+            return;
+        }
+
+        if (error)
+        {
+            return;
+        }
+
+        if (!write_websocket_message(
+                stream,
+                error_message("Scanner stream is read only")
+            ))
+        {
+            return;
+        }
+
+        buffer.consume(buffer.size());
+    }
+}
+
 void handle_connection(
     tcp::socket socket,
     std::shared_ptr<const ServerState> state)
@@ -550,6 +708,21 @@ void handle_connection(
 
         if (
             websocket::is_upgrade(request)
+            && state->scanner_mode
+            && request.target() == state->websocket_path
+        )
+        {
+            run_scanner_websocket(
+                std::move(socket),
+                std::move(request),
+                state->scanner
+            );
+            return;
+        }
+
+        if (
+            websocket::is_upgrade(request)
+            && !state->scanner_mode
             && (
                 request.target() == "/ws/heatmap"
                 || request.target() == "/ws/replay"
@@ -600,7 +773,9 @@ void serve(
     tcp::acceptor acceptor{context, endpoint};
 
     std::cout
-        << "Order book heatmap: http://"
+        << (options.scanner
+            ? "Multi-venue market scanner: http://"
+            : "Order book heatmap: http://")
         << options.bind_address
         << ':'
         << options.port
@@ -657,6 +832,19 @@ int main(int argc, char* argv[])
             std::thread(
                 run_live_source,
                 state->live_service
+            ).detach();
+        }
+        else if (options.scanner)
+        {
+            std::thread(
+                run_coinbase_scanner_source,
+                *state->scanner_universe,
+                state->scanner_publisher
+            ).detach();
+            std::thread(
+                run_kraken_scanner_source,
+                *state->scanner_universe,
+                state->scanner_publisher
             ).detach();
         }
 

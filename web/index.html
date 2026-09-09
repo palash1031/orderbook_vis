@@ -4,8 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="C++20 Coinbase and Kraken Level 2 market-data engine with a live browser heatmap">
-  <title>Depthfield — Order Book Heatmap</title>
+  <title>Depthfield — Multi-Venue Market Data</title>
   <link rel="stylesheet" href="/styles.css">
+  <script src="/scanner_model.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -19,7 +20,7 @@
       </span>
     </a>
 
-    <div class="instrument" aria-label="Loaded market">
+    <div class="instrument" id="single-market-summary" aria-label="Loaded market">
       <span class="eyebrow">MARKET</span>
       <div class="market-row">
         <select id="market-select" aria-label="Select live market" disabled>
@@ -46,7 +47,7 @@
     </div>
   </header>
 
-  <main class="workspace">
+  <main class="workspace" id="heatmap-workspace">
     <section class="chart-shell" aria-labelledby="chart-title">
       <div class="chart-heading">
         <div>
@@ -171,6 +172,48 @@
         </dl>
       </div>
     </aside>
+  </main>
+
+  <main class="scanner-workspace" id="scanner-workspace" hidden>
+    <section class="scanner-shell" aria-labelledby="scanner-title">
+      <div class="scanner-heading">
+        <div>
+          <span class="eyebrow">CONSOLIDATED TOP OF BOOK</span>
+          <h1 id="scanner-title">Multi-venue market monitor</h1>
+          <p>Live public quotes from independent Coinbase and Kraken sessions.</p>
+        </div>
+
+        <label class="scanner-sort" for="scanner-sort">
+          <span>Sort by divergence</span>
+          <input id="scanner-sort" type="checkbox">
+        </label>
+      </div>
+
+      <div class="scanner-table-wrap">
+        <table class="scanner-table">
+          <caption>Configured markets and consolidated live top-of-book quotes</caption>
+          <thead>
+            <tr>
+              <th scope="col">Market</th>
+              <th scope="col">Coinbase Bid</th>
+              <th scope="col">Coinbase Ask</th>
+              <th scope="col">Kraken Bid</th>
+              <th scope="col">Kraken Ask</th>
+              <th scope="col">Best Bid + Venue</th>
+              <th scope="col">Best Ask + Venue</th>
+              <th scope="col">Divergence</th>
+            </tr>
+          </thead>
+          <tbody id="scanner-rows"></tbody>
+        </table>
+      </div>
+
+      <footer class="scanner-footer">
+        <span><i class="status-key live"></i>Live and eligible</span>
+        <span><i class="status-key unavailable"></i>Unavailable or stale</span>
+        <span>Quote divergence excludes fees, latency, and execution risk.</span>
+      </footer>
+    </section>
   </main>
 </body>
 </html>
