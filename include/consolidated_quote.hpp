@@ -20,12 +20,20 @@ struct VenueTopOfBook
     std::optional<VenueQuote> ask;
 };
 
+struct FragmentationMetrics
+{
+    double bid_difference_bps;
+    double ask_difference_bps;
+    double max_difference_bps;
+};
+
 struct ConsolidatedQuote
 {
     Product product;
     std::map<Venue, VenueTopOfBook> venues;
     std::optional<VenueQuote> best_bid;
     std::optional<VenueQuote> best_ask;
+    std::optional<FragmentationMetrics> fragmentation;
 };
 
 class ConsolidatedQuoteEngine

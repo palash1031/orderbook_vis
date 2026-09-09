@@ -126,6 +126,7 @@ if(BUILD_TESTING)
         tests/kraken_universe_session_tests.cpp
         tests/venue_recovery_tests.cpp
         tests/consolidated_quote_tests.cpp
+        tests/fragmentation_tests.cpp
     )
 
     target_link_libraries(orderbook_tests PRIVATE

@@ -1,5 +1,7 @@
 #include "consolidated_quote.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <stdexcept>
 
 namespace
@@ -75,13 +77,63 @@ std::optional<VenueQuote> best_ask(
 
     return VenueQuote{venue, *price, book.asks().at(*price)};
 }
+
+std::optional<FragmentationMetrics> fragmentation(
+    const ConsolidatedQuote& quote)
+{
+    const auto coinbase = quote.venues.find(Venue::Coinbase);
+    const auto kraken = quote.venues.find(Venue::Kraken);
+
+    if (
+        coinbase == quote.venues.end()
+        || kraken == quote.venues.end()
+        || coinbase->second.status != VenueMarketStatus::Live
+        || kraken->second.status != VenueMarketStatus::Live
+        || !coinbase->second.bid
+        || !coinbase->second.ask
+        || !kraken->second.bid
+        || !kraken->second.ask
+        || !quote.best_bid
+        || !quote.best_ask
+    )
+    {
+        return std::nullopt;
+    }
+
+    const double midpoint =
+        (quote.best_bid->price + quote.best_ask->price) / 2.0;
+
+    if (!std::isfinite(midpoint) || midpoint <= 0.0)
+    {
+        return std::nullopt;
+    }
+
+    const double bid_difference_bps = std::abs(
+        coinbase->second.bid->price - kraken->second.bid->price
+    ) / midpoint * 10'000.0;
+    const double ask_difference_bps = std::abs(
+        coinbase->second.ask->price - kraken->second.ask->price
+    ) / midpoint * 10'000.0;
+
+    return FragmentationMetrics{
+        bid_difference_bps,
+        ask_difference_bps,
+        std::max(bid_difference_bps, ask_difference_bps)
+    };
+}
 }
 
 ConsolidatedQuote ConsolidatedQuoteEngine::calculate(
     const Product& product,
     const std::vector<VenueBookState>& states) const
 {
-    ConsolidatedQuote result{product, {}, std::nullopt, std::nullopt};
+    ConsolidatedQuote result{
+        product,
+        {},
+        std::nullopt,
+        std::nullopt,
+        std::nullopt
+    };
 
     for (const VenueBookState& state : states)
     {
@@ -132,5 +184,6 @@ ConsolidatedQuote ConsolidatedQuoteEngine::calculate(
         }
     }
 
+    result.fragmentation = fragmentation(result);
     return result;
 }
