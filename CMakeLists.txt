@@ -35,6 +35,7 @@ add_library(orderbook_core
     src/universe.cpp
     src/venue_adapter.cpp
     src/market_state_store.cpp
+    src/consolidated_quote.cpp
 )
 
 target_include_directories(orderbook_core PUBLIC include)
@@ -124,6 +125,7 @@ if(BUILD_TESTING)
         tests/coinbase_universe_session_tests.cpp
         tests/kraken_universe_session_tests.cpp
         tests/venue_recovery_tests.cpp
+        tests/consolidated_quote_tests.cpp
     )
 
     target_link_libraries(orderbook_tests PRIVATE
