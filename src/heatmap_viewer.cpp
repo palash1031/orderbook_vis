@@ -179,10 +179,10 @@ http::response<http::string_body> make_response(
     response.version(request.version());
     response.keep_alive(false);
     response.set(http::field::server, "orderbook-heatmap-viewer");
-    response.set(http::field::x_content_type_options, "nosniff");
+    response.set("X-Content-Type-Options", "nosniff");
     response.set(http::field::cache_control, "no-store");
     response.set(
-        http::field::content_security_policy,
+        "Content-Security-Policy",
         "default-src 'self'; script-src 'self'; style-src 'self'; "
         "connect-src 'self'; img-src 'self' data:"
     );
