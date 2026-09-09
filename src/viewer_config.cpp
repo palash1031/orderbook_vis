@@ -3,6 +3,8 @@
 #include "recorder_config.hpp"
 #include "replay_config.hpp"
 
+#include <boost/asio/ip/address.hpp>
+
 #include <charconv>
 #include <stdexcept>
 #include <string>
@@ -31,11 +33,27 @@ std::uint16_t parse_port(std::string_view text)
 
     return static_cast<std::uint16_t>(value);
 }
+
+std::string parse_bind_address(std::string_view text)
+{
+    boost::system::error_code error;
+    boost::asio::ip::make_address(text, error);
+
+    if (error)
+    {
+        throw std::invalid_argument(
+            "Viewer bind address must be a numeric IP address"
+        );
+    }
+
+    return std::string(text);
+}
 }
 
 ViewerOptions parse_viewer_options(
     std::span<const std::string_view> arguments,
-    std::filesystem::path default_web_root)
+    std::filesystem::path default_web_root,
+    std::optional<std::string_view> environment_port)
 {
     ViewerOptions options;
     options.web_root = std::move(default_web_root);
@@ -43,6 +61,8 @@ ViewerOptions parse_viewer_options(
     bool product_set = false;
     bool price_bin_set = false;
     bool venue_set = false;
+    bool bind_set = false;
+    bool port_set = false;
 
     for (std::size_t index = 0; index < arguments.size(); ++index)
     {
@@ -62,6 +82,19 @@ ViewerOptions parse_viewer_options(
             }
 
             options.live = true;
+            continue;
+        }
+
+        if (argument == "--public-demo")
+        {
+            if (options.public_demo)
+            {
+                throw std::invalid_argument(
+                    "--public-demo may be specified once"
+                );
+            }
+
+            options.public_demo = true;
             continue;
         }
 
@@ -86,7 +119,23 @@ ViewerOptions parse_viewer_options(
         }
         else if (argument == "--port")
         {
+            if (port_set)
+            {
+                throw std::invalid_argument("--port may be specified once");
+            }
+
             options.port = parse_port(value);
+            port_set = true;
+        }
+        else if (argument == "--bind")
+        {
+            if (bind_set)
+            {
+                throw std::invalid_argument("--bind may be specified once");
+            }
+
+            options.bind_address = parse_bind_address(value);
+            bind_set = true;
         }
         else if (argument == "--web-root")
         {
@@ -131,6 +180,11 @@ ViewerOptions parse_viewer_options(
                 "Unknown viewer option: " + std::string(argument)
             );
         }
+    }
+
+    if (!port_set && environment_port)
+    {
+        options.port = parse_port(*environment_port);
     }
 
     if (options.live && heatmap_set)

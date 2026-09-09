@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -73,7 +74,8 @@ void print_usage(const char* executable)
         << executable
         << " [--heatmap heatmap.json | --live"
         << " [--venue coinbase|kraken] [--product BTC-USD]"
-        << " [--price-bin auto|SIZE]] [--port 8080] [--web-root web]\n";
+        << " [--price-bin auto|SIZE]] [--bind 127.0.0.1]"
+        << " [--port 8080] [--web-root web] [--public-demo]\n";
 }
 
 std::string read_file(const std::filesystem::path& path)
@@ -589,13 +591,15 @@ void serve(
 {
     asio::io_context context{1};
     const tcp::endpoint endpoint{
-        asio::ip::address_v4::loopback(),
+        asio::ip::make_address(options.bind_address),
         options.port
     };
     tcp::acceptor acceptor{context, endpoint};
 
     std::cout
-        << "Order book heatmap: http://127.0.0.1:"
+        << "Order book heatmap: http://"
+        << options.bind_address
+        << ':'
         << options.port
         << '\n';
 
@@ -624,9 +628,17 @@ int main(int argc, char* argv[])
             arguments.emplace_back(argv[index]);
         }
 
+        std::optional<std::string_view> environment_port;
+
+        if (const char* value = std::getenv("PORT"))
+        {
+            environment_port = value;
+        }
+
         const ViewerOptions options = parse_viewer_options(
             arguments,
-            ORDERBOOK_WEB_ROOT
+            ORDERBOOK_WEB_ROOT,
+            environment_port
         );
 
         if (options.show_help)
