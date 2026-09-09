@@ -70,12 +70,20 @@ button {
   letter-spacing: 0.12em;
 }
 
+.brand-copy {
+  display: block;
+}
+
 .brand small {
   display: block;
   margin-top: 4px;
   color: var(--muted);
   font: 600 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: 0.2em;
+}
+
+.brand .brand-product {
+  letter-spacing: 0.09em;
 }
 
 .brand-mark {
@@ -145,8 +153,28 @@ button {
   font: 600 14px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-.connection {
+.topbar-actions {
   justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.source-link {
+  color: var(--muted);
+  font: 650 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.08em;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.source-link:hover,
+.source-link:focus-visible {
+  color: var(--bid);
+  outline: none;
+}
+
+.connection {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -639,6 +667,9 @@ input[type="range"]::-webkit-slider-thumb {
   }
 
   .connection span:last-child { display: none; }
+
+  .brand-product,
+  .source-link { display: none; }
 
   .instrument {
     min-width: 118px;
