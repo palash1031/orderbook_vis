@@ -1,0 +1,13 @@
+.git
+.github
+.worktrees
+.DS_Store
+build
+build-*
+cmake-build-*
+benchmark-results
+benchmarks
+docs
+tests
+*.jsonl
+heatmap.json

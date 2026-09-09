@@ -32,7 +32,7 @@ Stop the recorder with `Ctrl-C`.
 
 ## View a live heatmap
 
-Start the loopback-only viewer with a Coinbase product and open
+Start the loopback-default viewer with a Coinbase product and open
 [http://127.0.0.1:8080](http://127.0.0.1:8080):
 
 ```sh
@@ -122,7 +122,70 @@ viewer provides:
 - cursor readings for time, price, and resting size.
 
 Use `--port` to select another port or `--web-root` to serve a different copy
-of the dashboard assets.
+of the dashboard assets. The viewer binds to `127.0.0.1` unless `--bind` is
+provided. If no explicit `--port` is present, the viewer uses the `PORT`
+environment variable and then falls back to `8080`; the explicit CLI value
+always wins.
+
+## Run a public read-only demo
+
+`--public-demo` keeps the market-data stream and browser-side chart controls
+available while rejecting browser requests to change the process-wide live
+product. It does not add credentials, private APIs, or an order path. Public
+hosting also requires an explicit non-loopback bind:
+
+```sh
+PORT=10000 ./build/heatmap_viewer \
+  --live \
+  --venue coinbase \
+  --product UNI-USD \
+  --public-demo \
+  --bind 0.0.0.0
+```
+
+The existing `/health` route returns a cheap HTTP `200` response for platform
+health checks.
+
+### Test the production container locally
+
+Build and run the same multi-stage image used by Render:
+
+```sh
+docker build -t depthfield .
+docker run --rm -p 8080:8080 \
+  depthfield \
+  ./heatmap_viewer \
+    --live \
+    --venue coinbase \
+    --product UNI-USD \
+    --public-demo \
+    --bind 0.0.0.0 \
+    --port 8080 \
+    --web-root /app/web
+```
+
+Then open [http://127.0.0.1:8080](http://127.0.0.1:8080) or check
+`curl http://127.0.0.1:8080/health`.
+
+### Deploy on Render for free
+
+The root `render.yaml` defines one Docker Web Service named `depthfield`, uses
+the Free compute plan, and checks `/health`. Push the deployment commit to
+GitHub, choose **New → Blueprint** in Render, connect this repository, and apply
+the detected service. The image starts the read-only Coinbase `UNI-USD` demo,
+binds to `0.0.0.0`, and reads Render's `PORT` value.
+
+Render supplies the public `onrender.com` URL, managed TLS, and public WebSocket
+support. The browser derives `wss://.../ws/heatmap` from that HTTPS origin and
+reconnects with bounded exponential backoff after network or instance loss.
+
+Free Web Services spin down after 15 minutes without inbound HTTP traffic or
+incoming WebSocket messages, and the next visitor can wait about one minute for
+a cold start. Render provides 750 Free instance-hours per workspace each month;
+no database or persistent disk is required here. See Render's current
+[Web Service](https://render.com/docs/web-services),
+[WebSocket](https://render.com/docs/websocket), and
+[Free plan](https://render.com/docs/free) documentation for platform limits.
 
 ## Test
 

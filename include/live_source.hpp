@@ -21,6 +21,12 @@ using LiveSourceSleeper =
     std::function<void(std::chrono::milliseconds)>;
 using LiveSourceStopCheck = std::function<bool()>;
 
+enum class LiveControlAccess
+{
+    Interactive,
+    ReadOnly
+};
+
 class LiveSourceRunner
 {
 public:
@@ -67,7 +73,8 @@ public:
         LiveProductSourceFactory source_factory,
         ReconnectBackoffConfig backoff_config = {},
         LiveSourceSleeper sleeper = {},
-        std::string_view source_name = "Coinbase"
+        std::string_view source_name = "Coinbase",
+        LiveControlAccess control_access = LiveControlAccess::Interactive
     );
 
     void run(LiveSourceStopCheck should_stop = {});
@@ -90,6 +97,7 @@ private:
     ReconnectBackoffConfig backoff_config_;
     LiveSourceSleeper sleeper_;
     std::string source_name_;
+    LiveControlAccess control_access_ = LiveControlAccess::Interactive;
     mutable std::mutex mutex_;
     std::condition_variable changed_;
     Selection selection_;

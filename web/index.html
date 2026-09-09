@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Local Coinbase Level 2 order book heatmap viewer">
+  <meta name="description" content="C++20 Coinbase and Kraken Level 2 market-data engine with a live browser heatmap">
   <title>Depthfield — Order Book Heatmap</title>
   <link rel="stylesheet" href="/styles.css">
   <script src="/app.js" defer></script>
@@ -12,8 +12,9 @@
   <header class="topbar">
     <a class="brand" href="/" aria-label="Depthfield home">
       <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-      <span>
+      <span class="brand-copy">
         <strong>DEPTHFIELD</strong>
+        <small class="brand-product">C++20 MULTI-VENUE MARKET DATA ENGINE</small>
         <small id="stream-mode-label">ORDER BOOK STREAM</small>
       </span>
     </a>
@@ -31,9 +32,17 @@
       </div>
     </div>
 
-    <div class="connection" id="connection-state" role="status">
-      <span class="status-light"></span>
-      <span>Connecting to stream</span>
+    <div class="topbar-actions">
+      <a
+        class="source-link"
+        href="https://github.com/palash1031/orderbook_vis"
+        target="_blank"
+        rel="noopener noreferrer"
+      >GitHub ↗</a>
+      <div class="connection" id="connection-state" role="status">
+        <span class="status-light"></span>
+        <span>Connecting to stream</span>
+      </div>
     </div>
   </header>
 

@@ -307,13 +307,15 @@ LiveMarketService::LiveMarketService(
     LiveProductSourceFactory source_factory,
     ReconnectBackoffConfig backoff_config,
     LiveSourceSleeper sleeper,
-    std::string_view source_name)
+    std::string_view source_name,
+    LiveControlAccess control_access)
     : heatmap_config_(std::move(heatmap_config)),
       hub_(std::move(hub)),
       source_factory_(std::move(source_factory)),
       backoff_config_(backoff_config),
       sleeper_(std::move(sleeper)),
-      source_name_(source_name)
+      source_name_(source_name),
+      control_access_(control_access)
 {
     if (!hub_ || !source_factory_)
     {
@@ -399,6 +401,13 @@ bool LiveMarketService::switch_product(std::string_view product_id)
 
 void LiveMarketService::apply_control(std::string_view command_json)
 {
+    if (control_access_ == LiveControlAccess::ReadOnly)
+    {
+        throw std::invalid_argument(
+            "Live controls are disabled for read-only clients"
+        );
+    }
+
     try
     {
         const json::object command = json::parse(command_json).as_object();

@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -73,7 +74,8 @@ void print_usage(const char* executable)
         << executable
         << " [--heatmap heatmap.json | --live"
         << " [--venue coinbase|kraken] [--product BTC-USD]"
-        << " [--price-bin auto|SIZE]] [--port 8080] [--web-root web]\n";
+        << " [--price-bin auto|SIZE]] [--bind 127.0.0.1]"
+        << " [--port 8080] [--web-root web] [--public-demo]\n";
 }
 
 std::string read_file(const std::filesystem::path& path)
@@ -126,7 +128,10 @@ std::shared_ptr<ServerState> load_state(const ViewerOptions& options)
             },
             ReconnectBackoffConfig{},
             LiveSourceSleeper{},
-            venue_name(options.venue)
+            venue_name(options.venue),
+            options.public_demo
+                ? LiveControlAccess::ReadOnly
+                : LiveControlAccess::Interactive
         );
     }
     else
@@ -174,10 +179,10 @@ http::response<http::string_body> make_response(
     response.version(request.version());
     response.keep_alive(false);
     response.set(http::field::server, "orderbook-heatmap-viewer");
-    response.set(http::field::x_content_type_options, "nosniff");
+    response.set("X-Content-Type-Options", "nosniff");
     response.set(http::field::cache_control, "no-store");
     response.set(
-        http::field::content_security_policy,
+        "Content-Security-Policy",
         "default-src 'self'; script-src 'self'; style-src 'self'; "
         "connect-src 'self'; img-src 'self' data:"
     );
@@ -589,13 +594,15 @@ void serve(
 {
     asio::io_context context{1};
     const tcp::endpoint endpoint{
-        asio::ip::address_v4::loopback(),
+        asio::ip::make_address(options.bind_address),
         options.port
     };
     tcp::acceptor acceptor{context, endpoint};
 
     std::cout
-        << "Order book heatmap: http://127.0.0.1:"
+        << "Order book heatmap: http://"
+        << options.bind_address
+        << ':'
         << options.port
         << '\n';
 
@@ -624,9 +631,17 @@ int main(int argc, char* argv[])
             arguments.emplace_back(argv[index]);
         }
 
+        std::optional<std::string_view> environment_port;
+
+        if (const char* value = std::getenv("PORT"))
+        {
+            environment_port = value;
+        }
+
         const ViewerOptions options = parse_viewer_options(
             arguments,
-            ORDERBOOK_WEB_ROOT
+            ORDERBOOK_WEB_ROOT,
+            environment_port
         );
 
         if (options.show_help)

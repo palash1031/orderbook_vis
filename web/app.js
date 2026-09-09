@@ -34,6 +34,8 @@ const cursorFields = {
 
 const state = {
   socket: null,
+  reconnectTimer: null,
+  reconnectAttempt: 0,
   data: null,
   streamMode: "replay",
   nextColumnIndex: 0,
@@ -52,6 +54,9 @@ const state = {
   geometry: null,
   renderQueued: false,
 };
+
+const reconnectInitialDelayMs = 500;
+const reconnectMaximumDelayMs = 10_000;
 
 const palette = {
   background: "#080c12",
@@ -814,20 +819,69 @@ function handleStreamMessage(event) {
   }
 }
 
+function socketIsActive(socket) {
+  return Boolean(socket) && (
+    socket.readyState === WebSocket.CONNECTING
+    || socket.readyState === WebSocket.OPEN
+  );
+}
+
+function disableBackendControls() {
+  controls.play.disabled = true;
+  controls.restartPlayback.disabled = true;
+  controls.speed.disabled = true;
+  controls.market.disabled = true;
+}
+
+function scheduleReconnect() {
+  if (state.reconnectTimer !== null || socketIsActive(state.socket)) return;
+
+  const exponent = Math.min(state.reconnectAttempt, 10);
+  const delay = Math.min(
+    reconnectInitialDelayMs * (2 ** exponent),
+    reconnectMaximumDelayMs,
+  );
+  state.reconnectAttempt += 1;
+  setConnectionStatus("", "Reconnecting…");
+
+  if (!state.data || state.data.columns.length === 0) {
+    message.hidden = false;
+    message.textContent = "Reconnecting to heatmap stream…";
+  }
+
+  state.reconnectTimer = window.setTimeout(() => {
+    state.reconnectTimer = null;
+    connectStream();
+  }, delay);
+}
+
 function connectStream() {
+  if (socketIsActive(state.socket)) return;
+
+  if (state.reconnectTimer !== null) {
+    window.clearTimeout(state.reconnectTimer);
+    state.reconnectTimer = null;
+  }
+
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const socket = new WebSocket(`${protocol}//${window.location.host}/ws/heatmap`);
+  let retryOnClose = true;
   state.socket = socket;
 
   socket.addEventListener("open", () => {
+    if (state.socket !== socket) return;
+    state.reconnectAttempt = 0;
     setConnectionStatus("", "Loading heatmap stream");
     controls.market.disabled = state.streamMode !== "live";
   });
 
   socket.addEventListener("message", (event) => {
+    if (state.socket !== socket) return;
+
     try {
       handleStreamMessage(event);
     } catch (error) {
+      retryOnClose = false;
       setConnectionStatus("error", "Invalid heatmap stream");
       message.hidden = false;
       message.textContent = error instanceof Error
@@ -837,22 +891,30 @@ function connectStream() {
     }
   });
 
-  socket.addEventListener("close", () => {
+  socket.addEventListener("close", (event) => {
+    if (state.socket !== socket) return;
+    state.socket = null;
     state.playbackStatus = "disconnected";
-    controls.play.disabled = true;
-    controls.restartPlayback.disabled = true;
-    controls.speed.disabled = true;
-    controls.market.disabled = true;
-    setConnectionStatus("error", "Stream disconnected");
+    disableBackendControls();
 
-    if (!state.data || state.data.columns.length === 0) {
-      message.hidden = false;
-      message.textContent = "Heatmap stream disconnected";
+    if (!retryOnClose || event.code === 1000) {
+      setConnectionStatus("error", "Stream disconnected");
+
+      if (!state.data || state.data.columns.length === 0) {
+        message.hidden = false;
+        message.textContent = "Heatmap stream disconnected";
+      }
+
+      return;
     }
+
+    scheduleReconnect();
   });
 
   socket.addEventListener("error", () => {
-    setConnectionStatus("error", "Stream unavailable");
+    if (state.socket === socket) {
+      setConnectionStatus("error", "Stream unavailable");
+    }
   });
 }
 
