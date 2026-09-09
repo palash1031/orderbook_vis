@@ -182,9 +182,13 @@ CoinbaseUniverseSession::CoinbaseUniverseSession(
         );
     }
 
+    std::vector<std::string> product_ids;
+    product_ids.reserve(universe_.size());
+
     for (const Product& product : universe_.products())
     {
         books_.try_emplace(product);
+        product_ids.push_back(product.to_string());
         pending_.emplace_back(VenueMarketStatusEvent{
             {Venue::Coinbase, product},
             VenueMarketStatus::Connecting
@@ -192,10 +196,10 @@ CoinbaseUniverseSession::CoinbaseUniverseSession(
     }
 
     wire_->write(make_heartbeat_subscription());
+    wire_->write(make_level2_subscription(product_ids));
 
     for (const Product& product : universe_.products())
     {
-        wire_->write(make_level2_subscription(product.to_string()));
         pending_.emplace_back(VenueMarketStatusEvent{
             {Venue::Coinbase, product},
             VenueMarketStatus::WaitingForSnapshot

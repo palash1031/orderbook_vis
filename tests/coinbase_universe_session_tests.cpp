@@ -236,6 +236,35 @@ TEST(CoinbaseLevel2StreamTest, PreservesSingleProductWireBehavior)
     EXPECT_EQ(stream.read(), "unchanged raw frame");
 }
 
+TEST(CoinbaseUniverseSessionTest, BatchesDefaultUniverseSubscription)
+{
+    const MarketUniverse universe = MarketUniverse::default_usd();
+    const auto state = wire_state({});
+    CoinbaseUniverseSession session(universe, scripted_wire(state));
+
+    ASSERT_EQ(state->writes.size(), 2U);
+
+    const json::object heartbeat_message =
+        json::parse(state->writes[0]).as_object();
+    EXPECT_EQ(heartbeat_message.at("channel").as_string(), "heartbeats");
+
+    const json::object level2_message =
+        json::parse(state->writes[1]).as_object();
+    EXPECT_EQ(level2_message.at("channel").as_string(), "level2");
+
+    const json::array& products =
+        level2_message.at("product_ids").as_array();
+    ASSERT_EQ(products.size(), universe.size());
+
+    for (std::size_t index = 0; index < products.size(); ++index)
+    {
+        EXPECT_EQ(
+            products[index].as_string(),
+            universe.products()[index].to_string()
+        );
+    }
+}
+
 TEST(CoinbaseUniverseSessionTest, ReconstructsInterleavedProductsOnOneWire)
 {
     const auto state = wire_state(read_fixture_lines(
@@ -243,29 +272,18 @@ TEST(CoinbaseUniverseSessionTest, ReconstructsInterleavedProductsOnOneWire)
     ));
     CoinbaseUniverseSession session(btc_uni_universe(), scripted_wire(state));
 
-    ASSERT_EQ(state->writes.size(), 3U);
+    ASSERT_EQ(state->writes.size(), 2U);
     EXPECT_EQ(
         json::parse(state->writes[0]).as_object().at("channel").as_string(),
         "heartbeats"
     );
 
-    for (std::size_t index = 1; index < state->writes.size(); ++index)
-    {
-        const json::object request = json::parse(state->writes[index]).as_object();
-        EXPECT_EQ(request.at("channel").as_string(), "level2");
-        EXPECT_EQ(request.at("product_ids").as_array().size(), 1U);
-    }
-
-    EXPECT_EQ(
-        json::parse(state->writes[1]).as_object()
-            .at("product_ids").as_array().front().as_string(),
-        "BTC-USD"
-    );
-    EXPECT_EQ(
-        json::parse(state->writes[2]).as_object()
-            .at("product_ids").as_array().front().as_string(),
-        "UNI-USD"
-    );
+    const json::object request = json::parse(state->writes[1]).as_object();
+    EXPECT_EQ(request.at("channel").as_string(), "level2");
+    const json::array& products = request.at("product_ids").as_array();
+    ASSERT_EQ(products.size(), 2U);
+    EXPECT_EQ(products[0].as_string(), "BTC-USD");
+    EXPECT_EQ(products[1].as_string(), "UNI-USD");
 
     const std::vector<TrustedBookEvent> events = read_trusted_events(session, 4);
     ASSERT_EQ(events.size(), 4U);
