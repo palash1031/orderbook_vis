@@ -38,4 +38,4 @@ USER depthfield
 ENV PORT=10000
 EXPOSE 10000
 
-CMD ["./heatmap_viewer", "--live", "--venue", "coinbase", "--product", "UNI-USD", "--public-demo", "--bind", "0.0.0.0", "--web-root", "/app/web"]
+CMD ["./heatmap_viewer", "--scanner", "--public-demo", "--bind", "0.0.0.0", "--web-root", "/app/web"]

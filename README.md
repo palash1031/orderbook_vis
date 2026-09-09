@@ -1,7 +1,7 @@
 # Order Book Heatmap
 
 A C++20 Coinbase/Kraken Level 2 market-data engine, order-book reconstructor,
-and browser-based live/replay liquidity heatmap viewer.
+multi-venue quote scanner, and browser-based live/replay liquidity heatmap.
 
 ## Build
 
@@ -87,6 +87,41 @@ the book. The frozen price grid and rolling history survive recovery, with a
 visible discontinuity between the old and newly synchronized data. Subscription
 errors such as an unknown product remain visible and are not retried endlessly.
 
+## View the multi-venue market scanner
+
+Start one Coinbase universe session and one Kraken universe session, then open
+[http://127.0.0.1:8080](http://127.0.0.1:8080):
+
+```sh
+./build/heatmap_viewer --scanner
+```
+
+The scanner keeps independent trusted books for Coinbase and Kraken across the
+configured USD universe, currently:
+
+```text
+CAKE-USD  DASH-USD  ATOM-USD  POL-USD   ICP-USD   DOT-USD
+HBAR-USD  UNI-USD   BAT-USD   ETH-USD   BTC-USD   SOL-USD
+```
+
+Every product stays visible even when one venue is unsupported, connecting,
+waiting for a snapshot, stale, disconnected, or reconnecting. Only live books
+can contribute to the consolidated best bid or ask. Where both venues have
+comparable live quotes, the table reports quote divergence in basis points; it
+does not represent arbitrage profit and does not include fees or execution risk.
+
+The browser connects to the read-only `/ws/scanner` endpoint. A new browser gets
+the ordered universe and the current state for all 12 products immediately,
+then receives incremental updates only for products whose scanner state changes.
+The default table order is the configured universe order; the divergence toggle
+sorts locally without changing backend state.
+
+Coinbase and Kraken recovery are independent. A failed venue becomes ineligible
+immediately while the other continues to update. Reconnecting books remain
+ineligible until each product receives a fresh trusted snapshot. The existing
+single-market Coinbase/Kraken heatmaps and replay mode remain available through
+their original commands.
+
 ## Generate and view a replay heatmap
 
 First replay a capture and export its rolling heatmap history:
@@ -136,9 +171,7 @@ hosting also requires an explicit non-loopback bind:
 
 ```sh
 PORT=10000 ./build/heatmap_viewer \
-  --live \
-  --venue coinbase \
-  --product UNI-USD \
+  --scanner \
   --public-demo \
   --bind 0.0.0.0
 ```
@@ -155,9 +188,7 @@ docker build -t depthfield .
 docker run --rm -p 8080:8080 \
   depthfield \
   ./heatmap_viewer \
-    --live \
-    --venue coinbase \
-    --product UNI-USD \
+    --scanner \
     --public-demo \
     --bind 0.0.0.0 \
     --port 8080 \
@@ -172,12 +203,13 @@ Then open [http://127.0.0.1:8080](http://127.0.0.1:8080) or check
 The root `render.yaml` defines one Docker Web Service named `depthfield`, uses
 the Free compute plan, and checks `/health`. Push the deployment commit to
 GitHub, choose **New → Blueprint** in Render, connect this repository, and apply
-the detected service. The image starts the read-only Coinbase `UNI-USD` demo,
+the detected service. The image starts the read-only Coinbase/Kraken scanner,
 binds to `0.0.0.0`, and reads Render's `PORT` value.
 
 Render supplies the public `onrender.com` URL, managed TLS, and public WebSocket
-support. The browser derives `wss://.../ws/heatmap` from that HTTPS origin and
-reconnects with bounded exponential backoff after network or instance loss.
+support. The browser discovers scanner mode and uses
+`wss://.../ws/scanner` from that HTTPS origin, reconnecting with bounded
+exponential backoff after network or instance loss.
 
 Free Web Services spin down after 15 minutes without inbound HTTP traffic or
 incoming WebSocket messages, and the next visitor can wait about one minute for
