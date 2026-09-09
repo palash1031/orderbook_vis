@@ -128,7 +128,10 @@ std::shared_ptr<ServerState> load_state(const ViewerOptions& options)
             },
             ReconnectBackoffConfig{},
             LiveSourceSleeper{},
-            venue_name(options.venue)
+            venue_name(options.venue),
+            options.public_demo
+                ? LiveControlAccess::ReadOnly
+                : LiveControlAccess::Interactive
         );
     }
     else

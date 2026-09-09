@@ -506,6 +506,35 @@ TEST(LiveMarketServiceTest, NormalizesAndValidatesSwitchControls)
     EXPECT_THROW(service.apply_control("not json"), std::invalid_argument);
 }
 
+TEST(LiveMarketServiceTest, ReadOnlyClientControlCannotSwitchSharedProduct)
+{
+    auto hub = std::make_shared<LiveStreamHub>();
+    LiveMarketService service(
+        "SOL-USD",
+        {},
+        hub,
+        [](std::string_view) -> std::unique_ptr<LiveMessageSource>
+        {
+            return nullptr;
+        },
+        {},
+        {},
+        "Coinbase",
+        LiveControlAccess::ReadOnly
+    );
+    const auto client = hub->subscribe();
+    ASSERT_EQ(drain(client).size(), 1U);
+
+    EXPECT_THROW(
+        service.apply_control(
+            R"({"action":"switch_product","product_id":"ETH-USD"})"
+        ),
+        std::invalid_argument
+    );
+    EXPECT_EQ(service.product_id(), "SOL-USD");
+    EXPECT_TRUE(drain(client).empty());
+}
+
 TEST(LiveMarketServiceTest, RunningServiceSwitchesToFreshProductSnapshot)
 {
     auto hub = std::make_shared<LiveStreamHub>();
