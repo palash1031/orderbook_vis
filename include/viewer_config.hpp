@@ -20,6 +20,7 @@ struct ViewerOptions
     std::string bind_address = "127.0.0.1";
     std::uint16_t port = 8080;
     bool live = false;
+    bool scanner = false;
     bool show_help = false;
     bool public_demo = false;
 };

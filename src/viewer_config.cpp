@@ -85,6 +85,19 @@ ViewerOptions parse_viewer_options(
             continue;
         }
 
+        if (argument == "--scanner")
+        {
+            if (options.scanner)
+            {
+                throw std::invalid_argument(
+                    "--scanner may be specified once"
+                );
+            }
+
+            options.scanner = true;
+            continue;
+        }
+
         if (argument == "--public-demo")
         {
             if (options.public_demo)
@@ -194,7 +207,32 @@ ViewerOptions parse_viewer_options(
         );
     }
 
-    if (!options.live && (product_set || price_bin_set || venue_set))
+    if (options.scanner && options.live)
+    {
+        throw std::invalid_argument(
+            "--scanner and --live select different stream sources"
+        );
+    }
+
+    if (options.scanner && heatmap_set)
+    {
+        throw std::invalid_argument(
+            "--scanner and --heatmap select different stream sources"
+        );
+    }
+
+    if (options.scanner && (product_set || price_bin_set || venue_set))
+    {
+        throw std::invalid_argument(
+            "--product, --price-bin, and --venue are not scanner options"
+        );
+    }
+
+    if (
+        !options.live
+        && !options.scanner
+        && (product_set || price_bin_set || venue_set)
+    )
     {
         throw std::invalid_argument(
             "--product, --price-bin, and --venue require --live"

@@ -130,3 +130,58 @@ TEST(ViewerConfigTest, RejectsInvalidDuplicateAndReplayVenueOptions)
     };
     EXPECT_THROW(parse_viewer_options(replay), std::invalid_argument);
 }
+
+TEST(ViewerConfigTest, AcceptsScannerWithDeploymentEndpointOptions)
+{
+    constexpr std::array<std::string_view, 6> arguments{
+        "--scanner",
+        "--public-demo",
+        "--bind",
+        "0.0.0.0",
+        "--port",
+        "10000"
+    };
+    const ViewerOptions options = parse_viewer_options(arguments);
+
+    EXPECT_TRUE(options.scanner);
+    EXPECT_FALSE(options.live);
+    EXPECT_TRUE(options.public_demo);
+    EXPECT_EQ(options.bind_address, "0.0.0.0");
+    EXPECT_EQ(options.port, 10'000);
+}
+
+TEST(ViewerConfigTest, ScannerLiveAndExplicitReplayAreMutuallyExclusive)
+{
+    constexpr std::array<std::string_view, 2> live{
+        "--scanner", "--live"
+    };
+    EXPECT_THROW(parse_viewer_options(live), std::invalid_argument);
+
+    constexpr std::array<std::string_view, 3> replay{
+        "--scanner", "--heatmap", "capture.json"
+    };
+    EXPECT_THROW(parse_viewer_options(replay), std::invalid_argument);
+
+    constexpr std::array<std::string_view, 2> duplicate{
+        "--scanner", "--scanner"
+    };
+    EXPECT_THROW(parse_viewer_options(duplicate), std::invalid_argument);
+}
+
+TEST(ViewerConfigTest, ScannerRejectsSingleMarketOptions)
+{
+    constexpr std::array<std::string_view, 3> product{
+        "--scanner", "--product", "BTC-USD"
+    };
+    EXPECT_THROW(parse_viewer_options(product), std::invalid_argument);
+
+    constexpr std::array<std::string_view, 3> venue{
+        "--scanner", "--venue", "kraken"
+    };
+    EXPECT_THROW(parse_viewer_options(venue), std::invalid_argument);
+
+    constexpr std::array<std::string_view, 3> price_bin{
+        "--scanner", "--price-bin", "1"
+    };
+    EXPECT_THROW(parse_viewer_options(price_bin), std::invalid_argument);
+}
